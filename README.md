@@ -4,6 +4,15 @@ Haha it's actually three stages, depending on how you count:
 - Partitionning - RL
 - Compute computation policy based on partition
 
+Terminology:
+- 'Target net-F' is the main network doing some task 'F_theta: X->Y', whose computation is divided in nodes eta (e.g. neurons in a dense nnet). 
+- 'Partition model-B' is the thing that assigns each node in the target net to one of k partitions, 'B_beta: Theta->[k]^{|eta|}
+- 'Computation policy-pi' is the policy that performs conditional computation on the target network 'pi_omega X->{0,1}^{|eta|}
+- 'Lazy model-f' is the resulting combination of the computation policy. 'f_{theta,omega}: X->Y'
+
+note: the words "partition function" have a very strong meaning in energy based models, do not use!
+
+
 
 #### Partitioning
 hp : number of partition.
