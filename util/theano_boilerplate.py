@@ -22,7 +22,8 @@ def make_param(shape):
         return theano.shared(nprand(shape, numpy.sqrt(6./(shape[1]+shape[0]*numpy.prod(shape[2:])))), 'W')
     raise ValueError(shape)
 
-
+def sgd(params, grads, lr):
+    return [(i, i-lr*gi) for i,gi in zip(params,grads)]
 
 def _log(*args):
     if _log.on:

@@ -4,10 +4,13 @@ import numpy as np
 import theano
 import theano.tensor as T
 
-from util import make_param, srng
+from util import make_param, srng, sgd, SVHN
 
 import shelve
 
+def randargmax(b,**kw):
+    """ a random tie-breaking argmax"""
+    return np.argmax(np.random.random(b.shape) * (b==b.max()),**kw)
 
 class TargetNet:
     def __init__(self):
@@ -35,11 +38,11 @@ class BanditPartitionner:
     def __init__(self, npart, nhid):
         self.n = sum(nhid)
         self.total_rewards = np.zeros((sum(nhid), npart))
-        self.visits = np.zeros((sum(nhid), npart))
+        self.visits = np.zeros((sum(nhid), npart)) + 1e-3
         
     def makePartition(self):
         # greedy partition
-        return np.argmax(self.total_rewards / self.visits, axis=1)
+        return randargmax(self.total_rewards / self.visits, axis=1)
 
     def partitionFeedback(self, partition, reward):
         self.total_rewards[np.ogrid[:self.n], partition] += reward
@@ -53,28 +56,58 @@ class ReinforceComputationPolicy:
         self.params = [self.W, self.b]
 
     def applyAndGetFeedbackMethod(self, x):
-        probs = T.nnet.sigmoid(T.dot(x,W)+b) * 0.98 + 0.01
+        probs = T.nnet.sigmoid(T.dot(x,self.W)+self.b) * 0.98 + 0.01
         mask = srng.uniform(probs.shape) < probs
             
-        return mask, self.rewardFeedback(probs, mask)
+        return mask, probs, self.rewardFeedback(probs, mask)
     def rewardFeedback(self, probs, mask):
         def f(reward, lr):
             loss = theano.gradient.disconnected_grad(-reward)
-            grads = T.grad(T.mean(T.log(probs) * loss), self.params)
-            updates = sgd(self.params, self.grads, lr)
+            reinf = T.mean(T.mean(T.log(probs * mask + (1-probs) * (1-mask)),axis=1) * loss)
+            grads = T.grad(reinf, self.params)
+            updates = sgd(self.params, grads, lr)
         return f
 
 
 class LazyNet:
-    def __init__(self, npart):
+    def __init__(self, npart, lr):
         self.target = TargetNet()
         self.partitionner = BanditPartitionner(npart, self.target.nhid)
         self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
-
-    def performUpdate(self, xtrain, ytrain, xvalid, yvalid):
+        self.lr = lr
+        
+    def performUpdate(self, dataset, maxEpochs=50):
         print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
         partition = self.partitionner.makePartition()
-        mask, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
+        partitionMask, probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
+        masks = [partition[start:end]
+                 for start,end in zip(np.cumsum(self.target.nhid) - self.target.nhid[0],
+                                      np.cumsum(self.target.nhid))]
+        
         o = self.target.applyToXWithMask(x, masks)
+
+        mbloss = T.nnet.categorical_crossentropy(o,y)
+        updates = policyFeedbackMethod(mbloss, self.lr)
+        acc = T.sum(T.eq(T.argmax(o,axis=1),y))
+        loss = T.sum(mbloss)
+        print 'compiling'
+        learn = theano.function([x,y],[loss, acc],updates=updates)
+        test = theano.function([x,y],[loss, acc, T.mean(probs, axis=0)])
+
+        print 'training computation policy'
+        tolerance = 5
+        last_validation_loss = 1
+        for epoch in range(maxEpochs):
+            train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(), learn)
+            valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
+            print epoch, train_loss, train_acc, valid_loss, valid_acc
+            print probs
+            if valid_loss > last_validation_loss:
+                tolerance -= 1
+            last_validation_loss = valid_loss
+
+svhn = SVHN()
+net = LazyNet(4, 0.0001)
+net.performUpdate(svhn)
