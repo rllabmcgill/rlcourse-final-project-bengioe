@@ -51,4 +51,4 @@ class SVHN:
         yield n
         for i in range(n/mbsize + bool(n%mbsize)):
             idx = indexes[i*mbsize:(i+1)*mbsize]
-            yield dset[0][idx], dset[1][idx]
+            yield numpy.float32(dset[0][idx]/255.), dset[1][idx]

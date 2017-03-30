@@ -57,12 +57,13 @@ class ReinforceComputationPolicy:
 
     def applyAndGetFeedbackMethod(self, x):
         probs = T.nnet.sigmoid(T.dot(x,self.W)+self.b) * 0.98 + 0.01
+        probs = theano.printing.Print('probs')(probs)
         mask = srng.uniform(probs.shape) < probs
             
         return mask, probs, self.rewardFeedback(probs, mask)
     def rewardFeedback(self, probs, mask):
         def f(reward, lr):
-            loss = theano.gradient.disconnected_grad(-reward)
+            loss = theano.gradient.disconnected_grad(reward)
             reinf = T.mean(T.mean(T.log(probs * mask + (1-probs) * (1-mask)),axis=1) * loss)
             grads = T.grad(reinf, self.params)
             updates = sgd(self.params, grads, lr)
@@ -106,8 +107,10 @@ class LazyNet:
             print probs
             if valid_loss > last_validation_loss:
                 tolerance -= 1
+                if tolerance <= 0:
+                    break
             last_validation_loss = valid_loss
 
 svhn = SVHN()
-net = LazyNet(4, 0.0001)
+net = LazyNet(4, 0.001)
 net.performUpdate(svhn)
