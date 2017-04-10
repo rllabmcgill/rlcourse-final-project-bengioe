@@ -4,20 +4,71 @@ import numpy as np
 import gzip
 import os
 
-
-for path in ['/data/svhn_crop/svhn_shuffled.pkl',
+svhn_path = None
+for path in ['/data/svhn_crop/svhn_shuffled_trainX.raw',
+             '/data/svhn_crop/svhn_shuffled.pkl',
               '/your/path/here']:
     if os.path.exists(path):
         svhn_path = path
         break
+if svhn_path is None:
+    print '>>> Warning <<< couldnt find SVHN'
 
+import os
+_proc_status = '/proc/%d/status' % os.getpid()
+
+_scale = {'kB': 1024.0, 'mB': 1024.0*1024.0,
+          'KB': 1024.0, 'MB': 1024.0*1024.0}
+
+def _VmB(VmKey):
+    '''Private.
+    '''
+    global _proc_status, _scale
+     # get pseudo file  /proc/<pid>/status
+    try:
+        t = open(_proc_status)
+        v = t.read()
+        t.close()
+    except:
+        return 0.0  # non-Linux?
+     # get VmKey line e.g. 'VmRSS:  9999  kB\n ...'
+    i = v.index(VmKey)
+    v = v[i:].split(None, 3)  # whitespace
+    if len(v) < 3:
+        return 0.0  # invalid format?
+     # convert Vm value to bytes
+    return float(v[1]) * _scale[v[2]]
+
+
+def memory(since=0.0):
+    '''Return memory usage in bytes.
+    '''
+    return _VmB('VmSize:') - since
+
+
+def resident(since=0.0):
+    '''Return resident memory usage in bytes.
+    '''
+    return _VmB('VmRSS:') - since
 
 
 class SVHN:
     def __init__(self, flat=True):
-        train,test = cPickle.load(open(svhn_path,'r'))
-        train[1] = train[1].flatten() - 1
-        test[1] = test[1].flatten() - 1
+        path = svhn_path
+        print resident()
+        if path.endswith('.pkl'):
+            train,test = cPickle.load(open(svhn_path,'r'))
+            train[1] = train[1].flatten() - 1
+            test[1] = test[1].flatten() - 1
+        elif path.endswith('.raw'):
+            path = path[:-len('_trainX.raw')]
+            print path
+            print resident()
+            train = [np.memmap(path+'_trainX.raw',mode='r',shape=(604388, 32, 32, 3)),
+                     np.memmap(path+'_trainY.raw',mode='r',shape=(604388,))]
+            test = [np.memmap(path+'_testX.raw',mode='r',shape=(26032, 32, 32, 3)),
+                    np.memmap(path+'_testY.raw',mode='r',shape=(26032,))]
+            print resident()
         n = 580000
         if flat:
             train[0] = train[0].reshape((train[0].shape[0],-1))
@@ -25,30 +76,34 @@ class SVHN:
         self.train = [train[0][:n], train[1][:n]]
         self.valid = [train[0][n:], train[1][n:]]
         self.test = test
+        print resident()
         
     def runEpoch(self, dataGenerator, func):
         n = dataGenerator.next()
+        #print n
         stats = None
         for a in dataGenerator:
             s = func(*a)
             if stats is None:
                 stats = map(np.float32,s)
             else:
-                for i,j in zip(stats,s):
-                    i += j
+                for i,j in enumerate(s):
+                    stats[i] += j
+        #print stats, [i/n for i in stats]
         return [i / n for i in stats]
 
     def validMinibatches(self, mbsize=32):
-        return self.minibatches(self.valid, mbsize)
+        return self.minibatches(self.valid, mbsize, True)
     
     def trainMinibatches(self, mbsize=32):
-        return self.minibatches(self.train, mbsize)
+        return self.minibatches(self.train, mbsize, True)
 
-    def minibatches(self, dset, mbsize=32):
+    def minibatches(self, dset, mbsize=32, yieldN=False):
         n = dset[0].shape[0]
         indexes = np.arange(n)
         np.random.shuffle(indexes)
-        yield n
+        if yieldN:
+            yield n
         for i in range(n/mbsize + bool(n%mbsize)):
             idx = indexes[i*mbsize:(i+1)*mbsize]
             yield numpy.float32(dset[0][idx]/255.), dset[1][idx]
