@@ -10,6 +10,8 @@ from util import make_param, srng, sgd, SVHN
 import shelve
 import cPickle as pickle
 
+from itertools import product
+
 def randargmax(b,**kw):
     """ a random tie-breaking argmax"""
     return np.argmax(np.random.random(b.shape) * (b==b.max()),**kw)
@@ -80,6 +82,61 @@ class BanditPartitionner:
         self.total_rewards[np.ogrid[:self.n], partition] += reward
         self.visits[np.ogrid[:self.n], partition] += 1
 
+class ContextualBanditPartitionner:
+    #Linear Response Banding Algorithm
+    def __init__(self, npart, nhid, net):
+        self.n = sum(nhid)
+        self.nhid = nhid
+        self.weights = net.params
+        self.npart = npart
+        self.nlayers = len(nhid)
+
+        self.total_rewards = np.zeros((sum(nhid), npart))
+        self.visits = np.zeros((sum(nhid), npart)) + 1e-3
+
+#        self.exploit_total_rewards = np.zeros((sum(nhid), npart))
+#        self.exploit_visits = np.zeros((sum(nhid), npart)) + 1e-3
+#        self.explore_total_rewards = np.zeros((sum(nhid), npart))
+#        self.explore_visits = np.zeros((sum(nhid), npart)) + 1e-3
+
+        self.beta_h = [np.zeros((npart, nh)) for nh in nhid]
+#        self.beta_t = [np.zeros((npart, nh)) for nh in nhid]
+
+    def makePartition(self):
+
+        X = self.weights # Todooooo
+        part = np.zeros((self.n,))
+        i = 0
+        for l in range(self.nlayers):
+            for n in range(self.nhid[l]):
+                if False :
+                # if gap between action is big enough use beta tilde instead of beta hat (whatever that means)
+#                if np.min([np.abs((beta_t[l][a1] - beta_t[l][a2]).T *X[l][n]) for a1,a2 in .....]) < h / 2.0:
+                    part[i] = randargmax([(self.beta_t[l][a]).T * X[l][n] for a in range(self.npart)])
+                else:
+                    part[i] = randargmax([(self.beta_h[l][a]).T * X[l][n] for a in range(self.npart)])
+            i += 1
+        return part
+
+    def betaUpdate(self):
+        X = self.weights
+        y = 0
+        for l, a in product(range(self.nlayers), range(self.npart)):
+            yy = y + self.nhid[l]
+            coeff, R = X[l], self.total_rewards[y:yy] / self.visits[y:yy]
+            self.beta_h[l][a] = np.linalg.ltsqr(coeff, R)
+
+            # only on exploration round
+#            self.beta_h[l][a] = least_sqr(np.hstack([explore_coeff, exploit_coeff]), np.vstack([explore_R, exploit_R]))
+#            self.beta_h[l][a] = least_sqr(explore_coeff, explore_R)
+            y = yy
+
+    def partitionFeedback(self, partition, reward):
+        self.total_rewards[np.ogrid[:self.n], partition] += reward
+        self.visits[np.ogrid[:self.n], partition] += 1
+        self.betaUpdate()
+
+
 
 class ReinforceComputationPolicy:
     def __init__(self, npart, nin):
@@ -109,7 +166,9 @@ class ReinforceComputationPolicy:
 class LazyNet:
     def __init__(self, npart, lr, reloadFrom=None, architecture=None):
         self.target = TargetNet(reloadFrom=reloadFrom,architecture=architecture)
-        self.partitionner = BanditPartitionner(npart, self.target.nhid)
+        #self.partitionner = BanditPartitionner(npart, self.target.nhid)
+        self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target)
+
         self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         self.lr = lr
         self.npart = npart
@@ -192,11 +251,15 @@ class LazyNet:
             last_validation_loss = valid_loss
 
 svhn = SVHN()
-if 1:
+if 0:
     #net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.performUpdate(svhn)
 if 0:
+    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
+    net.trainTargetOnDataset(svhn)
+    net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
+if 1 :
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
     net.trainTargetOnDataset(svhn)
     net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
