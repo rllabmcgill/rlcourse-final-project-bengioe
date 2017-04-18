@@ -197,7 +197,7 @@ class ContextualBanditPartitionner:
                 else:
                     part[i] = randargmax(np.array([(self.beta_h[l][a]).T * X[l][n] for a in range(self.npart)]))
             i += 1
-        return part
+        return part, lambda *x:[]
 
     def betaUpdate(self):
         X = self.weights
@@ -280,12 +280,12 @@ class LazyNet:
         #self.partitionner = BanditPartitionner(npart, self.target.nhid)
         #self.partitionner = UCBBanditPartitionner(npart, self.target.nhid)
         #self.partitionner = GumbelSoftmaxPartitionner(npart, self.target.nhid)
-        self.partitionner = partitionner(npart, self.target.nhid)
+        #self.partitionner = partitionner(npart, self.target.nhid)
         #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         #self.comppol = DPGComputationPolicy(npart, self.target.nin)
         self.comppol = comppol(npart, self.target.nin)
         self.lr = theano.shared(numpy.float32(lr))
-        #self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target)
+        self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target)
         #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         self.npart = npart
         
@@ -440,7 +440,7 @@ class LazyNet:
             if partition.ndim >= 2:
                 print partition.eval({}).argmax(axis=1)
             last_validation_loss = valid_loss
-            print self.partitionner.logits.get_value()
+            #print self.partitionner.logits.get_value()
         self.partitionner.partitionFeedback(partition, valid_acc)
         print list(probs), probs.mean()
         return {'train_acc':train_acc, 'valid_acc':valid_acc,
@@ -501,13 +501,12 @@ def generate_exps(exps):
     
         
 svhn = SVHN()
-<<<<<<< HEAD
-if 1:
+if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-if 0:
-    #net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
-    net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
+if 1:
+    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+    #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.updateLoop(svhn)
 if 0:
     net = LazyNet(16, 0.05,reloadFrom='./svhn_mlp/retrained_params_4_200_rd_nodiv.pkl')
@@ -532,7 +531,7 @@ def getTrainExps():
         if exp['mode'] == 'train':
             yield exp, i[:-4]
 
-if 1:
+if 0:
     exps = []
     for nlayers in [2,3,4]:
         for nhid in [200,400,800]:
