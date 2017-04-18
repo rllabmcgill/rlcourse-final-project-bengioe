@@ -310,7 +310,7 @@ class LazyNet:
             acc = T.sum(eq)
             loss = T.sum(mbloss)
         else :
-            o,hs = self.target.applyToX(x, dropout=0.5, return_activation=True)
+            o,hs = self.target.applyToX(x, dropout=None, return_activation=True)
             mbloss = T.nnet.categorical_crossentropy(o,y)
             #o = theano.printing.Print('o')(o)
             eq = T.eq(T.argmax(o,axis=1),y)
@@ -320,30 +320,30 @@ class LazyNet:
 
 
             Ws = self.target.get_weights()
-            c,i,j = T.scalar(), T.scalar(dtype='int32'), T.scalar(dtype='int32')
+#            c,i,j = T.scalar(), T.scalar(dtype='int32'), T.scalar(dtype='int32')
             #h, W = T.matrix(), T.matrix()
-            count_c = T.sum([T.eq(y[m],c) for m in range(mbsize)])
+ #           count_c = T.sum([T.eq(y[m],c) for m in range(mbsize)])
 
             #flow_ij_c = 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
 
-            def f_ij_c(h,W,c,i,j):
-                from theano import tests
-                q = tests.breakpoint.PdbBreakpoint('qweqwe')
-                qq = q(1,([abs(h[m,i]*W[i,j])for m in range(mbsize)]) )
-                return qq
+#            def f_ij_c(h,W,c,i,j):
+#                from theano import tests
+#                q = tests.breakpoint.PdbBreakpoint('qweqwe')
+#                qq = q(1,[abs(h[m,i]*W[i,j]) for m in range(mbsize)][0] )
+#                return qq
 #                return 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
 
-
- #           f_ij_c = theano.function([h,W,c,i,j,y],flow_ij_c)
-
-            nhid, nout = self.target.nhid, self.target.nout
+ #           f_ij_c = theano.function([h,W,c,i,j,y],flow_ij_c
+#            nhid, nout = self.target.nhid, self.target.nout
 #            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,ws,cls,i,j,y) for cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
+            onehot_y = T.extra_ops.to_one_hot(y,10)
+            f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+            reg_loss = T.sum([T.sum(T.prod(f,axis=0))  for f in f_ij_c])
 
-            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,w,cls,i,j) for cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
-
-
+#            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,w,cls,i,j) for #cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
 #            fancy_reg = T.sum([T.prod([f_ij_c(i,j,cls) for cls in range(self.nclass)]) for i,j in all_valid_pairs_of_nodes])
-            loss = loss + 0.001 * fancy_reg
+            loss = loss + 0.001 * reg_loss
+#            loss = loss + 0.001 * fancy_reg
 
         updates = sgd(self.target.params, T.grad(loss, self.target.params), self.lr)
         print 'compiling'
@@ -353,6 +353,7 @@ class LazyNet:
         last_validation_loss = 1
         vlosses = []
         vaccs = []
+        print('starting training')
         for epoch in range(maxEpochs):
             train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(mbsize), learn)
             valid_loss, valid_acc = dataset.runEpoch(dataset.validMinibatches(mbsize), test)
@@ -565,7 +566,8 @@ if 0:
             if i.endswith('.exp')]
     pool.map(run_exp, exps)
     net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
-if 0 :
+if 1 :
+#    net = LazyNet(4, 0.001, architecture=[32*32*3,10,10,10])
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
-    net.trainTargetOnDataset(svhn,special_reg=True)
+    net.trainTargetOnDataset(svhn,special_reg=True,mbsize=3)
     net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
