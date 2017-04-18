@@ -443,6 +443,7 @@ if 1:
                                            'lr':lr,
                                            'partitionner':partitionner,
                                            'comppol':comppol,
+                                           'targetnet':path,
                                            'weights':path+'.weights'})
                             #print path
         print len(phase2)
