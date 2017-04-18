@@ -33,7 +33,7 @@ class TargetNet:
                 
             self.nhid = [self.params[i*2].get_value().shape[1] for i in range(2)]
             self.nin = self.params[0].get_value().shape[0]
-            self.nout = self.params[-1].get_value().shape[1]
+            self.nout = self.params[-2].get_value().shape[1]
 
 
         elif architecture is not None:
@@ -221,7 +221,11 @@ class LazyNet:
             #flow_ij_c = 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
 
             def f_ij_c(h,W,c,i,j):
-                return 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
+                from theano import tests
+                q = tests.breakpoint.PdbBreakpoint('qweqwe')
+                qq = q(1,([abs(h[m,i]*W[i,j])for m in range(mbsize)]) )
+                return qq
+#                return 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
 
 
  #           f_ij_c = theano.function([h,W,c,i,j,y],flow_ij_c)
@@ -298,15 +302,15 @@ class LazyNet:
             last_validation_loss = valid_loss
 
 svhn = SVHN()
-if 0:
-    #net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
-    net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
+if 1:
+    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+    #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.performUpdate(svhn)
 if 0:
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
     net.trainTargetOnDataset(svhn)
     net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
-if 1 :
+if 0 :
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
     net.trainTargetOnDataset(svhn,special_reg=True)
     net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
