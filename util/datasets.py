@@ -7,7 +7,8 @@ import os
 svhn_path = None
 for path in ['/home/2014/ebengi/a10/data/svhn_crop/svhn_shuffled_trainX.raw',
              '/data/svhn_crop/svhn_shuffled.pkl',
-             '/your/path/here']:
+             '/your/path/here',
+             './svhn_shuffled.pkl']:
     if os.path.exists(path):
         svhn_path = path
         break
