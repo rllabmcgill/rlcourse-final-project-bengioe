@@ -5,9 +5,10 @@ import gzip
 import os
 
 svhn_path = None
-for path in ['/data/svhn_crop/svhn_shuffled_trainX.raw',
+for path in ['/home/2014/ebengi/a10/data/svhn_crop/svhn_shuffled_trainX.raw',
              '/data/svhn_crop/svhn_shuffled.pkl',
-              './svhn_shuffled.pkl']:
+             '/your/path/here',
+             './svhn_shuffled.pkl']:
     if os.path.exists(path):
         svhn_path = path
         break
@@ -62,13 +63,13 @@ class SVHN:
             test[1] = test[1].flatten() - 1
         elif path.endswith('.raw'):
             path = path[:-len('_trainX.raw')]
-            print path
-            print resident()
+            print 'raw',path
+            print 'resident:',resident()
             train = [np.memmap(path+'_trainX.raw',mode='r',shape=(604388, 32, 32, 3)),
                      np.memmap(path+'_trainY.raw',mode='r',shape=(604388,))]
             test = [np.memmap(path+'_testX.raw',mode='r',shape=(26032, 32, 32, 3)),
                     np.memmap(path+'_testY.raw',mode='r',shape=(26032,))]
-            print resident()
+            print 'resident:',resident()
         n = 580000
         if flat:
             train[0] = train[0].reshape((train[0].shape[0],-1))
@@ -76,7 +77,7 @@ class SVHN:
         self.train = [train[0][:n], train[1][:n]]
         self.valid = [train[0][n:], train[1][n:]]
         self.test = test
-        print resident()
+        print 'resident:',resident()
         
     def runEpoch(self, dataGenerator, func):
         n = dataGenerator.next()
