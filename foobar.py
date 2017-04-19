@@ -4,6 +4,7 @@ import numpy as np
 import theano
 import theano.tensor as T
 from theano.tests.breakpoint import PdbBreakpoint
+from theano.ifelse import ifelse
 
 from util import make_param, srng, sgd, SVHN
 
@@ -337,12 +338,40 @@ class LazyNet:
 #            nhid, nout = self.target.nhid, self.target.nout
 #            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,ws,cls,i,j,y) for cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
             onehot_y = T.extra_ops.to_one_hot(y,10)
-            f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
-            reg_loss = T.sum([T.sum(T.prod(f,axis=0))  for f in f_ij_c])
+            f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+           # f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+#           
+#            reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
 
+#            f_ij_c = [ifelse(T.neg(T.isnan(f)),f,1) for f in f_ij_c]
+#            reg_loss = T.sum([T.sum(T.prod(f,axis=0))  for f in f_ij_c])
+
+#            f_ij_c = T.concatenate(f_ij_c)
+
+            if False:
+                f_ij_c2 = []
+                outputs_info = T.as_tensor_variable(np.asarray(0, f_ij_c[0].dtype))
+                for f in f_ij_c:
+    #                f = theano.printing.Print('f')(f)
+
+                    f_ij_c_out, _ = theano.scan(fn=lambda z, _: theano.scan(fn=lambda y, _: theano.scan(fn=lambda x, _: ifelse(T.neg(T.isnan(x)), x, 1.0), outputs_info=outputs_info, sequences=y)[0],outputs_info=[T.vector()], sequences=z)[0], outputs_info=[T.matrix()], sequences=f)
+            #        f_ij_c_out, _ = theano.scan(fn=lambda x,_: ifelse(T.neg(T.isnan(x)), x, 1), outputs_info=outputs_info,  sequences=f)
+
+                f_ij_c2.append(f_ij_c_out)
+
+                f_ij_c = f_ij_c2
+            elif False :
+                f_ij_c = [T.switch(T.neg(T.isnan(f)), f, T.ones_like(f)) for f in f_ij_c]
+
+#            f_ij_c = [ifelse(T.neg(T.isnan(f,axis=0)), f, _) for f in f_ij_c]
+#            f_ij_c = [T.concatenate([ifelse(T.neg(T.isnan(f,axis=0)), ff, 1) for ff in f]) for f in f_ij_c]
+            reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
+
+#            reg_loss = theano.printing.Print('reg_loss')(reg_loss)
+#            loss = theano.printing.Print('loss')(loss)
 #            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,w,cls,i,j) for #cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
 #            fancy_reg = T.sum([T.prod([f_ij_c(i,j,cls) for cls in range(self.nclass)]) for i,j in all_valid_pairs_of_nodes])
-            loss = loss + 0.001 * reg_loss
+            loss = loss + 1e-9 * reg_loss
 #            loss = loss + 0.001 * fancy_reg
 
         updates = sgd(self.target.params, T.grad(loss, self.target.params), self.lr)
@@ -505,7 +534,7 @@ svhn = SVHN()
 if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-if 1:
+if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.updateLoop(svhn)
@@ -566,8 +595,13 @@ if 0:
             if i.endswith('.exp')]
     pool.map(run_exp, exps)
     net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
-if 1 :
+if 0 :
 #    net = LazyNet(4, 0.001, architecture=[32*32*3,10,10,10])
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
     net.trainTargetOnDataset(svhn,special_reg=True,mbsize=3)
     net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
+
+if 1 :
+    net = LazyNet(4, 0.001, architecture=[32*32*3,300,300,10])
+#    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
+    net.trainTargetOnDataset(svhn,special_reg=True,mbsize=64)

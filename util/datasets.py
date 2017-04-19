@@ -1,7 +1,9 @@
+from __future__ import print_function
 import cPickle
 import numpy
 import numpy as np
 import gzip
+import sys
 import os
 
 svhn_path = None
@@ -13,7 +15,7 @@ for path in ['/home/2014/ebengi/a10/data/svhn_crop/svhn_shuffled_trainX.raw',
         svhn_path = path
         break
 if svhn_path is None:
-    print '>>> Warning <<< couldnt find SVHN'
+    print('>>> Warning <<< couldnt find SVHN')
 
 import os
 _proc_status = '/proc/%d/status' % os.getpid()
@@ -56,20 +58,20 @@ def resident(since=0.0):
 class SVHN:
     def __init__(self, flat=True):
         path = svhn_path
-        print resident()
+        print(resident())
         if path.endswith('.pkl'):
             train,test = cPickle.load(open(svhn_path,'r'))
             train[1] = train[1].flatten() - 1
             test[1] = test[1].flatten() - 1
         elif path.endswith('.raw'):
             path = path[:-len('_trainX.raw')]
-            print 'raw',path
-            print 'resident:',resident()
+            print('raw',path)
+            print('resident:',resident())
             train = [np.memmap(path+'_trainX.raw',mode='r',shape=(604388, 32, 32, 3)),
                      np.memmap(path+'_trainY.raw',mode='r',shape=(604388,))]
             test = [np.memmap(path+'_testX.raw',mode='r',shape=(26032, 32, 32, 3)),
                     np.memmap(path+'_testY.raw',mode='r',shape=(26032,))]
-            print 'resident:',resident()
+            print('resident:',resident())
         n = 580000
         if flat:
             train[0] = train[0].reshape((train[0].shape[0],-1))
@@ -77,13 +79,18 @@ class SVHN:
         self.train = [train[0][:n], train[1][:n]]
         self.valid = [train[0][n:], train[1][n:]]
         self.test = test
-        print 'resident:',resident()
-        
+        print('resident:',resident())
+
     def runEpoch(self, dataGenerator, func):
         n = dataGenerator.next()
         #print n
         stats = None
+        e=-1
         for a in dataGenerator:
+            e += 1
+            if e %100 == 0 :
+                print('minibatch %i'%e,end='\r')
+                sys.stdout.flush()
             s = func(*a)
             if stats is None:
                 stats = map(np.float32,s)
