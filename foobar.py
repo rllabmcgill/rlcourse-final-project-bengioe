@@ -86,15 +86,19 @@ class TargetNet:
 class BanditPartitionner:
     def __init__(self, npart, nhid):
         self.n = sum(nhid)
+        self.npart = npart
         self.total_rewards = np.zeros((sum(nhid), npart)) + 1e-3
         self.visits = np.zeros((sum(nhid), npart)) + 1e-5
-        
+
     def makePartition(self):
         # greedy partition
         return randargmax(self.total_rewards / self.visits, axis=1), lambda *x: []
 
     def partitionFeedback(self, partition, reward):
-        self.total_rewards[np.ogrid[:self.n], partition] += reward
+        hist = np.histogram(partition,bins=self.npart)
+#        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
+        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist/self.n -0.25)**2) + reward
+
         self.visits[np.ogrid[:self.n], partition] += 1
         
 class UCBBanditPartitionner:
@@ -176,13 +180,7 @@ class ContextualBanditPartitionner:
         self.total_rewards = np.zeros((sum(nhid), npart))
         self.visits = np.zeros((sum(nhid), npart)) + 1e-3
 
-#        self.exploit_total_rewards = np.zeros((sum(nhid), npart))
-#        self.exploit_visits = np.zeros((sum(nhid), npart)) + 1e-3
-#        self.explore_total_rewards = np.zeros((sum(nhid), npart))
-#        self.explore_visits = np.zeros((sum(nhid), npart)) + 1e-3
-
         self.beta_h = [np.zeros((npart, nh)) for nh in nhid]
-#        self.beta_t = [np.zeros((npart, nh)) for nh in nhid]
 
     def makePartition(self):
 
@@ -191,13 +189,8 @@ class ContextualBanditPartitionner:
         i = 0
         for l in range(self.nlayers):
             for n in range(self.nhid[l]):
-                if False :
-                # if gap between action is big enough use beta tilde instead of beta hat (whatever that means)
-#                if np.min([np.abs((beta_t[l][a1] - beta_t[l][a2]).T *X[l][n]) for a1,a2 in .....]) < h / 2.0:
-                    part[i] = randargmax(np.array([(self.beta_t[l][a]).T * X[l][n] for a in range(self.npart)]))
-                else:
-                    part[i] = randargmax(np.array([(self.beta_h[l][a]).T * X[l][n] for a in range(self.npart)]))
-            i += 1
+                part[i] = randargmax(np.array([np.dot((self.beta_h[l][a]).T, X[l][n]) for a in range(self.npart)]))
+                i += 1
         return part, lambda *x:[]
 
     def betaUpdate(self):
@@ -207,14 +200,13 @@ class ContextualBanditPartitionner:
             yy = y + self.nhid[l]
             coeff, R = X[l], self.total_rewards[y:yy] / self.visits[y:yy]
             self.beta_h[l][a] = np.linalg.ltsqr(coeff, R)
-
-            # only on exploration round
-#            self.beta_h[l][a] = least_sqr(np.hstack([explore_coeff, exploit_coeff]), np.vstack([explore_R, exploit_R]))
-#            self.beta_h[l][a] = least_sqr(explore_coeff, explore_R)
             y = yy
 
     def partitionFeedback(self, partition, reward):
-        self.total_rewards[np.ogrid[:self.n], partition] += reward
+        hist = np.histogram(partition,bins=self.npart)
+#        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
+        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum((hist/self.n -0.25)**2) + reward
+#        self.total_rewards[np.ogrid[:self.n], partition] += reward
         self.visits[np.ogrid[:self.n], partition] += 1
         self.betaUpdate()
 
@@ -321,32 +313,9 @@ class LazyNet:
 
 
             Ws = self.target.get_weights()
-#            c,i,j = T.scalar(), T.scalar(dtype='int32'), T.scalar(dtype='int32')
-            #h, W = T.matrix(), T.matrix()
- #           count_c = T.sum([T.eq(y[m],c) for m in range(mbsize)])
-
-            #flow_ij_c = 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
-
-#            def f_ij_c(h,W,c,i,j):
-#                from theano import tests
-#                q = tests.breakpoint.PdbBreakpoint('qweqwe')
-#                qq = q(1,[abs(h[m,i]*W[i,j]) for m in range(mbsize)][0] )
-#                return qq
-#                return 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
-
- #           f_ij_c = theano.function([h,W,c,i,j,y],flow_ij_c
-#            nhid, nout = self.target.nhid, self.target.nout
-#            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,ws,cls,i,j,y) for cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
             onehot_y = T.extra_ops.to_one_hot(y,10)
             f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
            # f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
-#           
-#            reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
-
-#            f_ij_c = [ifelse(T.neg(T.isnan(f)),f,1) for f in f_ij_c]
-#            reg_loss = T.sum([T.sum(T.prod(f,axis=0))  for f in f_ij_c])
-
-#            f_ij_c = T.concatenate(f_ij_c)
 
             if False:
                 f_ij_c2 = []
@@ -363,16 +332,9 @@ class LazyNet:
             elif False :
                 f_ij_c = [T.switch(T.neg(T.isnan(f)), f, T.ones_like(f)) for f in f_ij_c]
 
-#            f_ij_c = [ifelse(T.neg(T.isnan(f,axis=0)), f, _) for f in f_ij_c]
-#            f_ij_c = [T.concatenate([ifelse(T.neg(T.isnan(f,axis=0)), ff, 1) for ff in f]) for f in f_ij_c]
             reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
 
-#            reg_loss = theano.printing.Print('reg_loss')(reg_loss)
-#            loss = theano.printing.Print('loss')(loss)
-#            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,w,cls,i,j) for #cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
-#            fancy_reg = T.sum([T.prod([f_ij_c(i,j,cls) for cls in range(self.nclass)]) for i,j in all_valid_pairs_of_nodes])
             loss = loss + 1e-9 * reg_loss
-#            loss = loss + 0.001 * fancy_reg
 
         updates = sgd(self.target.params, T.grad(loss, self.target.params), self.lr)
         print 'compiling'
@@ -407,6 +369,7 @@ class LazyNet:
         partition, partitionFeedbackMethod = self.partitionner.makePartition()
         partitionMask, probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
         if partition.ndim == 1:
+#            print('partition',partition)
             idxes = [partition[start:end]
                      for start,end in zip(np.cumsum(self.target.nhid) - self.target.nhid[0],
                                           np.cumsum(self.target.nhid))]
@@ -460,7 +423,7 @@ class LazyNet:
             vlosses.append(valid_loss); vaccs.append(valid_acc); pmeans.append(probs.mean())
             print epoch, train_loss, train_acc, valid_loss, valid_acc
             print probs
-            print test(numpy.float32(dataset.train[0][0:1]/255.), dataset.train[1][0:1])[2]
+#            print test(numpy.float32(dataset.train[0][0:1]/255.), dataset.train[1][0:1])[2]
             if valid_loss > last_validation_loss:
                 tolerance -= 1
                 self.lr.set_value(self.lr.get_value() * numpy.float32(0.75))
@@ -468,7 +431,12 @@ class LazyNet:
                 if tolerance <= 0:
                     break
             if partition.ndim >= 2:
-                print partition.eval({}).argmax(axis=1)
+                pt = partition.eval({}).argmax(axis=1)
+                print pt
+                print np.histogram(pt, bins=self.npart)
+            else :
+                print np.histogram(partition, bins=self.npart)
+
             last_validation_loss = valid_loss
             #print self.partitionner.logits.get_value()
         self.partitionner.partitionFeedback(partition, valid_acc)
@@ -534,7 +502,7 @@ svhn = SVHN()
 if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-if 0:
+if 1:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.updateLoop(svhn)
@@ -601,7 +569,7 @@ if 0 :
     net.trainTargetOnDataset(svhn,special_reg=True,mbsize=3)
     net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
 
-if 1 :
+if 0 :
     net = LazyNet(4, 0.001, architecture=[32*32*3,300,300,10])
 #    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
     net.trainTargetOnDataset(svhn,special_reg=True,mbsize=64)

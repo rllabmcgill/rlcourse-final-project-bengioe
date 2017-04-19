@@ -86,6 +86,7 @@ class SVHN:
         #print n
         stats = None
         e=-1
+        print('\n')
         for a in dataGenerator:
             e += 1
             if e %100 == 0 :
