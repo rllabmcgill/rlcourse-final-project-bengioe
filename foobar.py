@@ -94,10 +94,12 @@ class BanditPartitionner:
         # greedy partition
         return randargmax(self.total_rewards / self.visits, axis=1), lambda *x: []
 
-    def partitionFeedback(self, partition, reward):
+    def partitionFeedback(self, partition, reward,probs):
         hist = np.histogram(partition,bins=self.npart)
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
-        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist/self.n -0.25)**2) + reward
+#        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist/self.n -0.25)**2) + reward
+        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
+
 
         self.visits[np.ogrid[:self.n], partition] += 1
         
@@ -114,7 +116,7 @@ class UCBBanditPartitionner:
         # greedy partition
         return randargmax(self.Q + self.c*np.sqrt(np.log(self.t) / self.visits), axis=1), lambda *x: []
 
-    def partitionFeedback(self, partition, reward):
+    def partitionFeedback(self, partition, reward, probs):
         self.Q[np.ogrid[:self.n], partition] = self.Q[np.ogrid[:self.n], partition] + self.lr * (reward - self.Q[np.ogrid[:self.n], partition])
         self.visits[np.ogrid[:self.n], partition] += 1
         self.t += 1
@@ -202,10 +204,12 @@ class ContextualBanditPartitionner:
             self.beta_h[l][a] = np.linalg.ltsqr(coeff, R)
             y = yy
 
-    def partitionFeedback(self, partition, reward):
+    def partitionFeedback(self, partition, reward, probs):
         hist = np.histogram(partition,bins=self.npart)
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
-        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum((hist/self.n -0.25)**2) + reward
+#        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum((hist/self.n - 1.0/self.npart)**2) + reward
+        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
+
 #        self.total_rewards[np.ogrid[:self.n], partition] += reward
         self.visits[np.ogrid[:self.n], partition] += 1
         self.betaUpdate()
@@ -367,7 +371,7 @@ class LazyNet:
         # reset policy
         self.comppol = ReinforceComputationPolicy(self.npart, self.target.nin)
         partition, partitionFeedbackMethod = self.partitionner.makePartition()
-        partitionMask, probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
+        partitionMask, valid_probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
         if partition.ndim == 1:
 #            print('partition',partition)
             idxes = [partition[start:end]
@@ -403,14 +407,14 @@ class LazyNet:
         loss = T.sum(mbloss)
         print 'compiling'
         learn = theano.function([x,y],[loss, acc],updates=updates)
-        test = theano.function([x,y],[loss, acc, T.sum(probs, axis=0)])
+        test = theano.function([x,y],[loss, acc, T.sum(valid_probs, axis=0)])
         testMlp = theano.function([x,y],[T.sum(T.eq(T.argmax(self.target.applyToX(x),axis=1),y))])
 
         print 'original model valid accuracy:',dataset.runEpoch(dataset.validMinibatches(), testMlp)
         print 'start valid accuracy:'
-        valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
+        valid_loss, valid_acc, valid_probs = dataset.runEpoch(dataset.validMinibatches(), test)
         print valid_loss, valid_acc
-        print probs
+        print valid_probs
         print 'training computation policy'
         tolerance = 50
         last_validation_loss = 100
@@ -419,10 +423,10 @@ class LazyNet:
         pmeans = []
         for epoch in range(maxEpochs):
             train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(), learn)
-            valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
-            vlosses.append(valid_loss); vaccs.append(valid_acc); pmeans.append(probs.mean())
+            valid_loss, valid_acc, valid_probs = dataset.runEpoch(dataset.validMinibatches(), test)
+            vlosses.append(valid_loss); vaccs.append(valid_acc); pmeans.append(valid_probs.mean())
             print epoch, train_loss, train_acc, valid_loss, valid_acc
-            print probs
+            print valid_probs
 #            print test(numpy.float32(dataset.train[0][0:1]/255.), dataset.train[1][0:1])[2]
             if valid_loss > last_validation_loss:
                 tolerance -= 1
@@ -439,8 +443,8 @@ class LazyNet:
 
             last_validation_loss = valid_loss
             #print self.partitionner.logits.get_value()
-        self.partitionner.partitionFeedback(partition, valid_acc)
-        print list(probs), probs.mean()
+        self.partitionner.partitionFeedback(partition, valid_acc, valid_probs)
+        print list(valid_probs), valid_probs.mean()
         return {'train_acc':train_acc, 'valid_acc':valid_acc,
                 'train_loss':train_loss, 'valid_loss':valid_loss,
                 'vlosses':vlosses, 'vaccs':vaccs, 
