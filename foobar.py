@@ -95,7 +95,7 @@ class BanditPartitionner:
         return randargmax(self.total_rewards / self.visits, axis=1), lambda *x: []
 
     def partitionFeedback(self, partition, reward,probs):
-        hist = np.histogram(partition,bins=self.npart)
+        hist = np.histogram(partition,bins=self.npart)[0]
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist/self.n -0.25)**2) + reward
         self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
@@ -205,7 +205,7 @@ class ContextualBanditPartitionner:
             y = yy
 
     def partitionFeedback(self, partition, reward, probs):
-        hist = np.histogram(partition,bins=self.npart)
+        hist = np.histogram(partition,bins=self.npart)[0]
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
 #        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum((hist/self.n - 1.0/self.npart)**2) + reward
         self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
@@ -416,7 +416,7 @@ class LazyNet:
         print valid_loss, valid_acc
         print valid_probs
         print 'training computation policy'
-        tolerance = 50
+        tolerance = 10
         last_validation_loss = 100
         vlosses = []
         vaccs = []
