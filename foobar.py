@@ -4,7 +4,7 @@ import numpy as np
 import theano
 import theano.tensor as T
 from theano.tests.breakpoint import PdbBreakpoint
-from theano.ifelse import ifelse
+from theano.compile.nanguardmode import NanGuardMode
 
 from util import make_param, srng, sgd, SVHN
 
@@ -294,11 +294,11 @@ class LazyNet:
         pickle.dump([i.get_value() for i in self.comppol.params], file(path,'w'),-1)
 
 
-    def trainTargetOnDataset(self, dataset, maxEpochs=50,mbsize=32,special_reg=False):
+    def trainTargetOnDataset(self, dataset, maxEpochs=50, mbsize=32, info_flow_reg=False):
         print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
-        if not special_reg:
+        if not info_flow_reg:
             o = self.target.applyToX(x, dropout=0.5)
             mbloss = T.nnet.categorical_crossentropy(o,y)
             #o = theano.printing.Print('o')(o)
@@ -318,43 +318,56 @@ class LazyNet:
 
             Ws = self.target.get_weights()
             onehot_y = T.extra_ops.to_one_hot(y,10)
-            f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
-           # f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+           # f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+            f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
 
-            if False:
-                f_ij_c2 = []
-                outputs_info = T.as_tensor_variable(np.asarray(0, f_ij_c[0].dtype))
-                for f in f_ij_c:
+#            if False:
+#                f_ij_c2 = []
+#                outputs_info = T.as_tensor_variable(np.asarray(0, f_ij_c[0].dtype))
+#                for f in f_ij_c:
     #                f = theano.printing.Print('f')(f)
 
-                    f_ij_c_out, _ = theano.scan(fn=lambda z, _: theano.scan(fn=lambda y, _: theano.scan(fn=lambda x, _: ifelse(T.neg(T.isnan(x)), x, 1.0), outputs_info=outputs_info, sequences=y)[0],outputs_info=[T.vector()], sequences=z)[0], outputs_info=[T.matrix()], sequences=f)
+ #                   f_ij_c_out, _ = theano.scan(fn=lambda z, _: theano.scan(fn=lambda y, _: theano.scan(fn=lambda x, _: ifelse(T.neg(T.isnan(x)), x, 1.0), outputs_info=outputs_info, sequences=y)[0],outputs_info=[T.vector()], sequences=z)[0], outputs_info=[T.matrix()], sequences=f)
             #        f_ij_c_out, _ = theano.scan(fn=lambda x,_: ifelse(T.neg(T.isnan(x)), x, 1), outputs_info=outputs_info,  sequences=f)
 
-                f_ij_c2.append(f_ij_c_out)
+#                f_ij_c2.append(f_ij_c_out)
 
-                f_ij_c = f_ij_c2
-            elif False :
-                f_ij_c = [T.switch(T.neg(T.isnan(f)), f, T.ones_like(f)) for f in f_ij_c]
+#                f_ij_c = f_ij_c2
+#            elif False :
+#                f_ij_c = [T.switch(T.neg(T.isnan(f)), f, T.ones_like(f)) for f in f_ij_c]
 
             reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
+#            reg_loss = theano.printing.Print('reg_loss')(reg_loss)
+#            loss = theano.printing.Print('loss')(loss)
 
-            loss = loss + 1e-9 * reg_loss
+            loss = loss + 10*reg_loss
 
         updates = sgd(self.target.params, T.grad(loss, self.target.params), self.lr)
         print 'compiling'
-        learn = theano.function([x,y],[loss, acc],updates=updates)
-        test = theano.function([x,y],[loss, acc])
+        if info_flow_reg:
+            learn = theano.function([x,y],[loss, acc,reg_loss],updates=updates, mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
+            test = theano.function([x,y],[loss, acc,reg_loss],mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
+        else :
+            learn = theano.function([x,y],[loss, acc],updates=updates)
+            test = theano.function([x,y],[loss, acc])
         tolerance = 10
         last_validation_loss = 1
         vlosses = []
         vaccs = []
         print('starting training')
         for epoch in range(maxEpochs):
-            train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(mbsize), learn)
-            valid_loss, valid_acc = dataset.runEpoch(dataset.validMinibatches(mbsize), test)
+            if info_flow_reg:
+                train_loss, train_acc, train_reg = dataset.runEpoch(dataset.trainMinibatches(mbsize,balanced=True), learn)
+                valid_loss, valid_acc, valid_reg, = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=True), test)
+                print epoch, train_loss, train_acc, train_reg, valid_loss, valid_acc, valid_reg
+            else:
+                train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(mbsize), learn)
+                valid_loss, valid_acc = dataset.runEpoch(dataset.validMinibatches(mbsize), test)
+                print epoch, train_loss, train_acc, valid_loss, valid_acc
+
             vlosses.append(valid_loss); vaccs.append(valid_acc)
-            print epoch, train_loss, train_acc, valid_loss, valid_acc
             if valid_loss > last_validation_loss:
+                self.saveTargetWeights('temp.pkl')
                 tolerance -= 1
                 if tolerance <= 0:
                     break
@@ -506,7 +519,11 @@ svhn = SVHN()
 if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-if 1:
+if 1 :
+    net = LazyNet(16, 0.001, architecture=[32*32*3,250,250,10])
+    net.trainTargetOnDataset(svhn, info_flow_reg=True)
+    net.saveTargetWeights('./svhn_mlp/retrained_params_16_250_2.pkl')
+if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.updateLoop(svhn)
@@ -570,10 +587,10 @@ if 0:
 if 0 :
 #    net = LazyNet(4, 0.001, architecture=[32*32*3,10,10,10])
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
-    net.trainTargetOnDataset(svhn,special_reg=True,mbsize=3)
+    net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=3)
     net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
 
 if 0 :
     net = LazyNet(4, 0.001, architecture=[32*32*3,300,300,10])
 #    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
-    net.trainTargetOnDataset(svhn,special_reg=True,mbsize=64)
+    net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=64)

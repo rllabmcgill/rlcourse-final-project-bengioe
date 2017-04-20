@@ -1,10 +1,14 @@
-from __future__ import print_function
+#from __future__ import print_function
+from sklearn.model_selection import StratifiedKFold as SKF #for balanced minibatch option
 import cPickle
 import numpy
 import numpy as np
 import gzip
+from time import gmtime, strftime
+import pickle
 import sys
 import os
+from operator import itemgetter
 
 svhn_path = None
 for path in ['/home/2014/ebengi/a10/data/svhn_crop/svhn_shuffled_trainX.raw',
@@ -87,11 +91,12 @@ class SVHN:
         stats = None
         e=-1
         print('\n')
+        print "minibatch",
         for a in dataGenerator:
             e += 1
-            if e %100 == 0 :
-                print('minibatch %i'%e,end='\r')
-                sys.stdout.flush()
+            if e %10 == 0 :
+                print '%i,'%e,
+#                sys.stdout.flush()
             s = func(*a)
             if stats is None:
                 stats = map(np.float32,s)
@@ -104,8 +109,38 @@ class SVHN:
     def validMinibatches(self, mbsize=32):
         return self.minibatches(self.valid, mbsize, True)
     
-    def trainMinibatches(self, mbsize=32):
-        return self.minibatches(self.train, mbsize, True)
+    def trainMinibatches(self, mbsize=32,balanced=True):
+        if balanced :
+            return self.balancedMinibatches(self.train, mbsize, True)
+        else :
+            return self.minibatches(self.train, mbsize, True)
+
+    def balancedMinibatches(self, dset, mbsize=32, yieldN=False):
+        n = dset[0].shape[0]
+        if False :
+            if yieldN:
+                yield n
+            nb_minibatch = n / mbsize + bool(n % mbsize)
+            skf = SKF(n_splits=nb_minibatch,shuffle=True)
+            print('starting split %s'%strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+            split = map(itemgetter(1),skf.split(dset[0],dset[1]))
+            print('split done%s'%strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+            f = open('./split.pkl','wb')
+            split = list(split)
+            print('saving')
+            pickle.dump(split,f)
+            print('finished')
+            f.close()
+
+        else :
+            f = open('./split.pkl', 'rb')
+            split = pickle.load(f)
+            f.close()
+            print('split loaded')
+
+        for idx in split:
+            idx = idx
+            yield numpy.float32(dset[0][idx] / 255.), dset[1][idx]
 
     def minibatches(self, dset, mbsize=32, yieldN=False):
         n = dset[0].shape[0]
