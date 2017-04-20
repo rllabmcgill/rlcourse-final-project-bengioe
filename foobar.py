@@ -98,7 +98,9 @@ class BanditPartitionner:
         hist = np.histogram(partition,bins=self.npart)[0]
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist/self.n -0.25)**2) + reward
-        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
+       # self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
+        self.total_rewards[np.ogrid[:self.n], partition] += reward
+
 
 
         self.visits[np.ogrid[:self.n], partition] += 1
@@ -182,35 +184,38 @@ class ContextualBanditPartitionner:
         self.total_rewards = np.zeros((sum(nhid), npart))
         self.visits = np.zeros((sum(nhid), npart)) + 1e-3
 
-        self.beta_h = [np.zeros((npart, nh)) for nh in nhid]
+        self.beta_h = [np.zeros((npart, nh)) for nh in [net.nin]+nhid]
 
     def makePartition(self):
 
         X = self.weights
-        part = np.zeros((self.n,))
+        part = np.zeros((self.n,),dtype=np.int)
         i = 0
         for l in range(self.nlayers):
             for n in range(self.nhid[l]):
-                part[i] = randargmax(np.array([np.dot((self.beta_h[l][a]).T, X[l][n]) for a in range(self.npart)]))
+                #print(self.beta_h[l][0].shape, X[l][n].shape)
+                part[i] = randargmax(np.array([np.dot((self.beta_h[l][a]).T, X[l].T[n]) for a in range(self.npart)]))
                 i += 1
         return part, lambda *x:[]
 
     def betaUpdate(self):
         X = self.weights
         y = 0
-        for l, a in product(range(self.nlayers), range(self.npart)):
+        for l in range(self.nlayers):
             yy = y + self.nhid[l]
             coeff, R = X[l], self.total_rewards[y:yy] / self.visits[y:yy]
-            self.beta_h[l][a] = np.linalg.ltsqr(coeff, R)
+            for a in range(self.npart):
+                self.beta_h[l][a] = np.linalg.lstsq(coeff.T, R.T[a])[0]
             y = yy
 
     def partitionFeedback(self, partition, reward, probs):
         hist = np.histogram(partition,bins=self.npart)[0]
 #        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
 #        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum((hist/self.n - 1.0/self.npart)**2) + reward
-        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
-
-#        self.total_rewards[np.ogrid[:self.n], partition] += reward
+#        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
+	#print(np.ogrid[:self.n].dtype)
+        #print(partition.dtype)
+        self.total_rewards[np.ogrid[:self.n], partition] += reward
         self.visits[np.ogrid[:self.n], partition] += 1
         self.betaUpdate()
 
@@ -470,6 +475,10 @@ class LazyNet:
             accs.append(self.performUpdate(dataset))
             print '    ', i, max(accs)
             print accs
+    	f = open('results_updateloop.txt','w')
+        pickle.dump(accs,f)
+        f.close()
+
 
 def ls(c, endswith=''):
     return [os.path.join(c, i) for i in os.listdir(c) if i.endswith(endswith)]
@@ -519,7 +528,7 @@ svhn = SVHN()
 if 0:
     net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
     #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-if 1 :
+if 0 :
     net = LazyNet(16, 0.001, architecture=[32*32*3,250,250,10])
     net.trainTargetOnDataset(svhn, info_flow_reg=True)
     net.saveTargetWeights('./svhn_mlp/retrained_params_16_250_2.pkl')

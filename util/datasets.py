@@ -94,7 +94,7 @@ class SVHN:
         print "minibatch",
         for a in dataGenerator:
             e += 1
-            if e %10 == 0 :
+            if e %100 == 0 :
                 print '%i,'%e,
 #                sys.stdout.flush()
             s = func(*a)
@@ -109,7 +109,7 @@ class SVHN:
     def validMinibatches(self, mbsize=32):
         return self.minibatches(self.valid, mbsize, True)
     
-    def trainMinibatches(self, mbsize=32,balanced=True):
+    def trainMinibatches(self, mbsize=32,balanced=False):
         if balanced :
             return self.balancedMinibatches(self.train, mbsize, True)
         else :
