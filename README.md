@@ -1,4 +1,9 @@
 # two-stage-condnet
+
+## Report
+Read the report in (docs/report.pdf)[docs/report.pdf]
+
+
 Haha it's actually three stages, depending on how you count:
 - (Pre)Train target
 - Partitionning - RL
