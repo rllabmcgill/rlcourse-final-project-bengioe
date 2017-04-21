@@ -577,7 +577,7 @@ if 0:
     #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)] + [0 for _ in range(80)])
     net.saveComppolWeights('7fb112a1_compol.weights')
-if 1 :
+if 0 :
     net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
     flow = net.getFLowOnDataset(svhn,mbsize=20)
     f = open('results_flow.pkl', 'wb')
@@ -668,7 +668,7 @@ if 0:
         print len(phase2)
         generate_exps(phase2)
 
-if 1:
+if 0:
     pool = multiprocessing.Pool(4)
     exps = [i[:-4] for i in ls('results')
             if i.endswith('.exp')]
