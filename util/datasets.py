@@ -106,34 +106,36 @@ class SVHN:
         #print stats, [i/n for i in stats]
         return [i / n for i in stats]
 
-    def validMinibatches(self, mbsize=32):
-        return self.minibatches(self.valid, mbsize, True)
-    
+    def validMinibatches(self, mbsize=32,balanced=False):
+        if balanced:
+            return self.balancedMinibatches(self.valid, mbsize, True)
+        else:
+            return self.minibatches(self.valid, mbsize, True)
+
     def trainMinibatches(self, mbsize=32,balanced=False):
         if balanced :
             return self.balancedMinibatches(self.train, mbsize, True)
         else :
             return self.minibatches(self.train, mbsize, True)
 
-    def balancedMinibatches(self, dset, mbsize=32, yieldN=False):
+    def balancedMinibatches(self, dset, mbsize=32, yieldN=False,load=False):
         n = dset[0].shape[0]
-        if False :
-            if yieldN:
-                yield n
+        if yieldN:
+            yield n
+        if not load :
             nb_minibatch = n / mbsize + bool(n % mbsize)
             skf = SKF(n_splits=nb_minibatch,shuffle=True)
             print('starting split %s'%strftime("%Y-%m-%d %H:%M:%S", gmtime()))
             split = map(itemgetter(1),skf.split(dset[0],dset[1]))
             print('split done%s'%strftime("%Y-%m-%d %H:%M:%S", gmtime()))
-            f = open('./split.pkl','wb')
+            f = open('./split_valid_%i.pkl'%mbsize,'wb')
             split = list(split)
             print('saving')
             pickle.dump(split,f)
             print('finished')
             f.close()
-
         else :
-            f = open('./split.pkl', 'rb')
+            f = open('./split_valid_%i.pkl'%mbsize, 'rb')
             split = pickle.load(f)
             f.close()
             print('split loaded')

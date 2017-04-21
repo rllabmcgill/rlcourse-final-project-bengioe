@@ -186,7 +186,7 @@ class ContextualBanditPartitionner:
 
         self.beta_h = [np.zeros((npart, nh)) for nh in [net.nin]+nhid]
 
-    def makePartition(self):
+    def makePartition(self, epsilon=0.0):
 
         X = self.weights
         part = np.zeros((self.n,),dtype=np.int)
@@ -196,6 +196,12 @@ class ContextualBanditPartitionner:
                 #print(self.beta_h[l][0].shape, X[l][n].shape)
                 part[i] = randargmax(np.array([np.dot((self.beta_h[l][a]).T, X[l].T[n]) for a in range(self.npart)]))
                 i += 1
+        if epsilon > 0.0 :
+            rand_mask = np.random.binomial(1,epsilon,self.n)
+            rand_values = np.random.choice(range(self.npart),size=sum(rand_mask),replace=True)
+            for j,k in enumerate(rand_mask.nonzero()[0]):
+                part[k] = rand_values[j]
+
         return part, lambda *x:[]
 
     def betaUpdate(self):
@@ -282,13 +288,12 @@ class LazyNet:
         #self.partitionner = BanditPartitionner(npart, self.target.nhid)
         #self.partitionner = UCBBanditPartitionner(npart, self.target.nhid)
         #self.partitionner = GumbelSoftmaxPartitionner(npart, self.target.nhid)
-        #self.partitionner = partitionner(npart, self.target.nhid)
+        #self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target) 
+        self.partitionner = partitionner(npart, self.target.nhid)
         #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         #self.comppol = DPGComputationPolicy(npart, self.target.nin)
         self.comppol = comppol(npart, self.target.nin)
         self.lr = theano.shared(numpy.float32(lr))
-        self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target)
-        #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         self.npart = npart
         
     def saveTargetWeights(self, path):
@@ -298,6 +303,24 @@ class LazyNet:
     def saveComppolWeights(self, path):
         pickle.dump([i.get_value() for i in self.comppol.params], file(path,'w'),-1)
 
+    def getFLowOnDataset(self, dataset,mbsize=20):
+        print 'creating theano graph...'
+        x = T.matrix()
+        y = T.ivector()
+        o, hs = self.target.applyToX(x, dropout=None, return_activation=True)
+        Ws = self.target.get_weights()
+        onehot_y = T.extra_ops.to_one_hot(y, 10)
+        f_ij_c = [1.0 / T.sum(onehot_y, axis=0).dimshuffle(0, 'x', 'x') * T.sum(
+            onehot_y.dimshuffle(1, 0, 'x', 'x') * abs(h.dimshuffle('x', 0, 1, 'x') * W.dimshuffle('x', 'x', 0, 1)), axis=1)
+                  for h, W in zip(hs, Ws)]
+        print("compiling...")
+        eval_flow = theano.function([x,y], f_ij_c,
+                               mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=False))
+        print("calculating...")
+
+        flows = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=True), eval_flow)
+        print("done.")
+        return flows
 
     def trainTargetOnDataset(self, dataset, maxEpochs=50, mbsize=32, info_flow_reg=False):
         print 'creating theano graph...'
@@ -325,21 +348,6 @@ class LazyNet:
             onehot_y = T.extra_ops.to_one_hot(y,10)
            # f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
             f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
-
-#            if False:
-#                f_ij_c2 = []
-#                outputs_info = T.as_tensor_variable(np.asarray(0, f_ij_c[0].dtype))
-#                for f in f_ij_c:
-    #                f = theano.printing.Print('f')(f)
-
- #                   f_ij_c_out, _ = theano.scan(fn=lambda z, _: theano.scan(fn=lambda y, _: theano.scan(fn=lambda x, _: ifelse(T.neg(T.isnan(x)), x, 1.0), outputs_info=outputs_info, sequences=y)[0],outputs_info=[T.vector()], sequences=z)[0], outputs_info=[T.matrix()], sequences=f)
-            #        f_ij_c_out, _ = theano.scan(fn=lambda x,_: ifelse(T.neg(T.isnan(x)), x, 1), outputs_info=outputs_info,  sequences=f)
-
-#                f_ij_c2.append(f_ij_c_out)
-
-#                f_ij_c = f_ij_c2
-#            elif False :
-#                f_ij_c = [T.switch(T.neg(T.isnan(f)), f, T.ones_like(f)) for f in f_ij_c]
 
             reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
 #            reg_loss = theano.printing.Print('reg_loss')(reg_loss)
@@ -382,13 +390,16 @@ class LazyNet:
                 'vlosses':vlosses, 'vaccs':vaccs,
                 'last_epoch':epoch}
 
-    def performUpdate(self, dataset, maxEpochs=100):
+    def performUpdate(self, dataset, maxEpochs=100,epsilon=0.0):
         #print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
         # reset policy
         self.comppol = ReinforceComputationPolicy(self.npart, self.target.nin)
-        partition, partitionFeedbackMethod = self.partitionner.makePartition()
+        if epsilon > 0.0 :
+            partition, partitionFeedbackMethod = self.partitionner.makePartition(epsilon)
+        else :
+            partition, partitionFeedbackMethod = self.partitionner.makePartition()
         partitionMask, valid_probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
         if partition.ndim == 1:
 #            print('partition',partition)
@@ -469,15 +480,19 @@ class LazyNet:
                 'pmeans':pmeans,
                 'last_epoch':epoch}
     
-    def updateLoop(self, dataset):
+    def updateLoop(self, dataset, epsilon_schedule=None):
         accs = []
         for i in range(100):
-            accs.append(self.performUpdate(dataset))
+            if epsilon_schedule is None :
+                accs.append(self.performUpdate(dataset))
+            else:
+                print 'eps %f' % epsilon_schedule[i]
+                accs.append(self.performUpdate(dataset,epsilon=epsilon_schedule[i]))
             print '    ', i, max(accs)
             print accs
-    	f = open('results_updateloop.txt','w')
-        pickle.dump(accs,f)
-        f.close()
+    #    f = open('results_updateloop.txt','w')
+    #    pickle.dump(accs,f)
+    #    f.close()
 
 
 def ls(c, endswith=''):
@@ -533,9 +548,18 @@ if 0 :
     net.trainTargetOnDataset(svhn, info_flow_reg=True)
     net.saveTargetWeights('./svhn_mlp/retrained_params_16_250_2.pkl')
 if 0:
-    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+#    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+    net = LazyNet(16, 0.00001,reloadFrom='./chosebine/7fb112a1.weights')
     #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-    net.updateLoop(svhn)
+    net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)] + [0 for _ in range(80)])
+    net.saveComppolWeights('7fb112a1_compol.weights')
+if 1 :
+    net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
+    flow = net.getFLowOnDataset(svhn,mbsize=20)
+    f = open('results_flow.pkl', 'wb')
+    pickle.dump(flow, f)
+    f.close()
+
 if 0:
     net = LazyNet(16, 0.05,reloadFrom='./svhn_mlp/retrained_params_4_200_rd_nodiv.pkl')
     #net = LazyNet(16, 0.005,reloadFrom='./svhn_mlp/retrained_params_4_200.pkl')
