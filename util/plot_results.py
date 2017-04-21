@@ -103,6 +103,7 @@ def print_table(pexp, texp):
     for name,T,mult,headers in [
             ['accuracy ratio',ratios,1,['REINFORCE','DPG']],
             ['validation accuracy (\\%)',valid,100,['REINFORCE','DPG','Original']]]:
+        print map(lambda x:map(len,x), T)
         k = 5
         T = map(lambda x:map(lambda y:sorted(y)[-k:], x), T)
         print T
