@@ -85,12 +85,12 @@ class SVHN:
         stats = None
         e=-1
         print('\n')
-        print "minibatch",
         for a in dataGenerator:
             e += 1
-            if e %100 == 0 :
-                print '%i,'%e,
-#                sys.stdout.flush()
+            if e %10 == 0 :
+                print 'minibatch %i\r'%e,
+                sys.stdout.flush()
+            if e > 200: break
             s = func(*a)
             if stats is None:
                 stats = map(np.float32,s)
@@ -98,7 +98,7 @@ class SVHN:
                 for i,j in enumerate(s):
                     stats[i] += j
         #print stats, [i/n for i in stats]
-        return [i / n for i in stats]
+        return [i / (200*a[0].shape[0]) for i in stats]
 
     def validMinibatches(self, mbsize=32,balanced=False):
         if balanced:

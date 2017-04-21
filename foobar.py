@@ -288,8 +288,8 @@ class LazyNet:
         #self.partitionner = BanditPartitionner(npart, self.target.nhid)
         #self.partitionner = UCBBanditPartitionner(npart, self.target.nhid)
         #self.partitionner = GumbelSoftmaxPartitionner(npart, self.target.nhid)
-        #self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target) 
-        self.partitionner = partitionner(npart, self.target.nhid)
+        self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target) 
+        #self.partitionner = partitionner(npart, self.target.nhid)
         #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         #self.comppol = DPGComputationPolicy(npart, self.target.nin)
         self.comppol = comppol(npart, self.target.nin)
@@ -310,15 +310,17 @@ class LazyNet:
         o, hs = self.target.applyToX(x, dropout=None, return_activation=True)
         Ws = self.target.get_weights()
         onehot_y = T.extra_ops.to_one_hot(y, 10)
-        f_ij_c = [1.0 / T.sum(onehot_y, axis=0).dimshuffle(0, 'x', 'x') * T.sum(
+        f_ij_c = [T.sum(
             onehot_y.dimshuffle(1, 0, 'x', 'x') * abs(h.dimshuffle('x', 0, 1, 'x') * W.dimshuffle('x', 'x', 0, 1)), axis=1)
+        #f_ij_c = [1.0 / T.sum(onehot_y, axis=0).dimshuffle(0, 'x', 'x') * T.sum(
+        #    onehot_y.dimshuffle(1, 0, 'x', 'x') * abs(h.dimshuffle('x', 0, 1, 'x') * W.dimshuffle('x', 'x', 0, 1)), axis=1)
                   for h, W in zip(hs, Ws)]
         print("compiling...")
         eval_flow = theano.function([x,y], f_ij_c,
                                mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=False))
         print("calculating...")
 
-        flows = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=True), eval_flow)
+        flows = dataset.runEpoch(dataset.validMinibatches(mbsize), eval_flow)
         print("done.")
         return flows
 
@@ -328,7 +330,7 @@ class LazyNet:
         print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
-        if not special_reg:
+        if not info_flow_reg:
             if doDropout: 
                 if randomDropout:
                     drop = srng.uniform((1,),low=1e-2,high=1)
@@ -355,20 +357,20 @@ class LazyNet:
 
             Ws = self.target.get_weights()
             onehot_y = T.extra_ops.to_one_hot(y,10)
-           # f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
-            f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+            f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+           #f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
 
             reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
 #            reg_loss = theano.printing.Print('reg_loss')(reg_loss)
 #            loss = theano.printing.Print('loss')(loss)
 
-            loss = loss + 10*reg_loss
+            loss = loss + 1e1*reg_loss
 
         updates = sgd(self.target.params, T.grad(loss, self.target.params), self.lr)
         print 'compiling'
         if info_flow_reg:
-            learn = theano.function([x,y],[loss, acc,reg_loss],updates=updates, mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
-            test = theano.function([x,y],[loss, acc,reg_loss],mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
+            learn = theano.function([x,y],[loss, acc,reg_loss],updates=updates)#, mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
+            test = theano.function([x,y],[loss, acc,reg_loss])#,mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
         else :
             learn = theano.function([x,y],[loss, acc],updates=updates)
             test = theano.function([x,y],[loss, acc])
@@ -379,8 +381,8 @@ class LazyNet:
         print('starting training')
         for epoch in range(maxEpochs):
             if info_flow_reg:
-                train_loss, train_acc, train_reg = dataset.runEpoch(dataset.trainMinibatches(mbsize,balanced=True), learn)
-                valid_loss, valid_acc, valid_reg, = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=True), test)
+                train_loss, train_acc, train_reg = dataset.runEpoch(dataset.trainMinibatches(mbsize,balanced=False), learn)
+                valid_loss, valid_acc, valid_reg, = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=False), test)
                 print epoch, train_loss, train_acc, train_reg, valid_loss, valid_acc, valid_reg
             else:
                 train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(mbsize), learn)
@@ -389,7 +391,7 @@ class LazyNet:
 
             vlosses.append(valid_loss); vaccs.append(valid_acc)
             if valid_loss > last_validation_loss:
-                self.saveTargetWeights('temp.pkl')
+                self.saveTargetWeights('temp2.pkl')
                 tolerance -= 1
                 if tolerance <= 0:
                     break
@@ -493,7 +495,7 @@ class LazyNet:
     
     def updateLoop(self, dataset, epsilon_schedule=None):
         accs = []
-        for i in range(100):
+        for i in range(20):
             if epsilon_schedule is None :
                 accs.append(self.performUpdate(dataset))
             else:
@@ -564,124 +566,135 @@ def generate_exps(exps):
     
         
 svhn = SVHN()
-if 0:
-    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
-    #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-if 0 :
-    net = LazyNet(16, 0.001, architecture=[32*32*3,250,250,10])
-    net.trainTargetOnDataset(svhn, info_flow_reg=True)
-    net.saveTargetWeights('./svhn_mlp/retrained_params_16_250_2.pkl')
-if 0:
-#    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
-    net = LazyNet(16, 0.00001,reloadFrom='./chosebine/7fb112a1.weights')
-    #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-    net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)] + [0 for _ in range(80)])
-    net.saveComppolWeights('7fb112a1_compol.weights')
-if 0 :
-    net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
-    flow = net.getFLowOnDataset(svhn,mbsize=20)
-    f = open('results_flow.pkl', 'wb')
-    pickle.dump(flow, f)
-    f.close()
-
-if 0:
-    net = LazyNet(16, 0.05,reloadFrom='./svhn_mlp/retrained_params_4_200_rd_nodiv.pkl')
-    #net = LazyNet(16, 0.005,reloadFrom='./svhn_mlp/retrained_params_4_200.pkl')
-    #net = LazyNet(8, 0.05,reloadFrom='./svhn_mlp/retrained_params.pkl')
-    #net = LazyNet(8, 0.05,reloadFrom='./svhn_mlp/params.db')
-    net.performUpdate(svhn)
-if 0:
-    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,200,200,10])
-    net.trainTargetOnDataset(svhn)
-    net.saveTargetWeights('./svhn_mlp/retrained_params_4_200_rd_l1.pkl')
-    #net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
-
-import multiprocessing
-import os
-import os.path
-import cPickle as pkl
-import time
-
-def getTrainExps():
-    for i in ls('results', endswith='.exp'):
-        exp = pkl.load(open(i))
-        if exp['mode'] == 'train':
-            yield exp, i[:-4]
-
-def getPhase2Exps():
-    for i in ls('results', endswith='.exp'):
-        exp = pkl.load(open(i))
-        if exp['mode'] == 'phase2':
-            if 'Bandit' in exp['partitionner']:
-                print i
-if 0:
-    exps = []
-    for nlayers in [2,3,4]:
-        for nhid in [200,400,800]:
-            exps.append({'mode':'train', 'nlayers':nlayers, 'nhid':nhid,
-                         'no_dropout':True,
-                         'random_dropout':None})
-    exps_ = []
-    for nlayers in [2,3,4]:
-        for nhid in [200,400,800]:
-            for random_dropout in [True,False]:
-                exps.append({'mode':'train', 'nlayers':nlayers, 'nhid':nhid,
-                             'random_dropout':random_dropout})
-    
+if __name__ == '__main__':
     if 0:
-        generate_exps(exps)
-    elif 0:
-        phase2 = []
-        for npart in [8,16]:
-            for lr in [0.05,0.005,0.001]:
-                for partitionner in ['BanditPartitionner', 'GumbelSoftmaxPartitionner']:
-                    for comppol in ['ReinforceComputationPolicy', 'DPGComputationPolicy']:
-                        for exp, path in getTrainExps():
-                            phase2.append({'mode':'phase2',
-                                           'npart':npart,
-                                           'lr':lr,
-                                           'partitionner':partitionner,
-                                           'comppol':comppol,
-                                           'targetnet':path,
-                                           'weights':path+'.weights'})
-                            #print path
-        print len(phase2)
-        generate_exps(phase2)
-    elif 0:
-        phase2 = []
-        for npart in [8,16]:
-            for lr in [0.05,0.005,0.001]:
-                for partitionner in ['GumbelSoftmaxPartitionner']:
-                    for comppol in ['ReinforceComputationPolicy', 'DPGComputationPolicy']:
-                        for exp, path in getTrainExps():
-                            if 'no_dropout' not in exp:
-                                continue
-                            print exp, path
-                            phase2.append({'mode':'phase2',
-                                           'npart':npart,
-                                           'lr':lr,
-                                           'partitionner':partitionner,
-                                           'comppol':comppol,
-                                           'targetnet':path,
-                                           'weights':path+'.weights'})
-                            #print path
-        print len(phase2)
-        generate_exps(phase2)
+        net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+        #net = LazyNet(8, 0.001,reloadFrom='./svhn_mlp/retraed_params.pkl')
+    if 0:
+        net = LazyNet(16, 0.001, architecture=[32*32*3,500,500,10])
+        net.trainTargetOnDataset(svhn, info_flow_reg=True)
+        net.saveTargetWeights('./flowed_weights_2.pkl')
+    if 0:
+    #    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+        net = LazyNet(16, 0.00001,reloadFrom='./chosebine/7fb112a1.weights')
+        #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
+        net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)] + [0 for _ in range(80)])
+        net.saveComppolWeights('7fb112a1_compol.weights')
+    if 1:
+        net = LazyNet(16, 0.00001, reloadFrom='./temp2.pkl')
+        flow = net.getFLowOnDataset(svhn,mbsize=20)
+        f = open('results_flow_2.pkl', 'wb')
+        pickle.dump(flow, f)
+        f.close()
+    if 0 :
+        net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
+        flow = net.getFLowOnDataset(svhn,mbsize=20)
+        f = open('results_flow.pkl', 'wb')
+        pickle.dump(flow, f)
+        f.close()
+    if 0:
+        net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db',
+                      partitionner=ContextualBanditPartitionner)
+        net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)])
 
-if 0:
-    pool = multiprocessing.Pool(4)
-    exps = [i[:-4] for i in ls('results')
-            if i.endswith('.exp')]
-    pool.map(run_exp, exps)
+    if 0:
+        net = LazyNet(16, 0.05,reloadFrom='./svhn_mlp/retrained_params_4_200_rd_nodiv.pkl')
+        #net = LazyNet(16, 0.005,reloadFrom='./svhn_mlp/retrained_params_4_200.pkl')
+        #net = LazyNet(8, 0.05,reloadFrom='./svhn_mlp/retrained_params.pkl')
+        #net = LazyNet(8, 0.05,reloadFrom='./svhn_mlp/params.db')
+        net.performUpdate(svhn)
+    if 0:
+        net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,200,200,10])
+        net.trainTargetOnDataset(svhn)
+        net.saveTargetWeights('./svhn_mlp/retrained_params_4_200_rd_l1.pkl')
+        #net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
 
-if 0:
-    net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
-#    net = LazyNet(4, 0.001, architecture=[32*32*3,10,10,10])
-    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
-    net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=3)
-    net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
+    import multiprocessing
+    import os
+    import os.path
+    import cPickle as pkl
+    import time
 
-if 0 :
-    net = LazyNet(4, 0.001, architecture=[32*32*3,300,300,10])
-#    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
-    net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=64)
+    def getTrainExps():
+        for i in ls('results', endswith='.exp'):
+            exp = pkl.load(open(i))
+            if exp['mode'] == 'train':
+                yield exp, i[:-4]
+
+    def getPhase2Exps():
+        for i in ls('results', endswith='.exp'):
+            exp = pkl.load(open(i))
+            if exp['mode'] == 'phase2':
+                if 'Bandit' in exp['partitionner']:
+                    print i
+    if 0:
+        exps = []
+        for nlayers in [2,3,4]:
+            for nhid in [200,400,800]:
+                exps.append({'mode':'train', 'nlayers':nlayers, 'nhid':nhid,
+                             'no_dropout':True,
+                             'random_dropout':None})
+        exps_ = []
+        for nlayers in [2,3,4]:
+            for nhid in [200,400,800]:
+                for random_dropout in [True,False]:
+                    exps.append({'mode':'train', 'nlayers':nlayers, 'nhid':nhid,
+                                 'random_dropout':random_dropout})
+
+        if 0:
+            generate_exps(exps)
+        elif 0:
+            phase2 = []
+            for npart in [8,16]:
+                for lr in [0.05,0.005,0.001]:
+                    for partitionner in ['BanditPartitionner', 'GumbelSoftmaxPartitionner']:
+                        for comppol in ['ReinforceComputationPolicy', 'DPGComputationPolicy']:
+                            for exp, path in getTrainExps():
+                                phase2.append({'mode':'phase2',
+                                               'npart':npart,
+                                               'lr':lr,
+                                               'partitionner':partitionner,
+                                               'comppol':comppol,
+                                               'targetnet':path,
+                                               'weights':path+'.weights'})
+                                #print path
+            print len(phase2)
+            generate_exps(phase2)
+        elif 0:
+            phase2 = []
+            for npart in [8,16]:
+                for lr in [0.05,0.005,0.001]:
+                    for partitionner in ['GumbelSoftmaxPartitionner']:
+                        for comppol in ['ReinforceComputationPolicy', 'DPGComputationPolicy']:
+                            for exp, path in getTrainExps():
+                                if 'no_dropout' not in exp:
+                                    continue
+                                print exp, path
+                                phase2.append({'mode':'phase2',
+                                               'npart':npart,
+                                               'lr':lr,
+                                               'partitionner':partitionner,
+                                               'comppol':comppol,
+                                               'targetnet':path,
+                                               'weights':path+'.weights'})
+                                #print path
+            print len(phase2)
+            generate_exps(phase2)
+
+    if 0:
+        pool = multiprocessing.Pool(4)
+        exps = [i[:-4] for i in ls('results')
+                if i.endswith('.exp')]
+        pool.map(run_exp, exps)
+
+    if 0:
+        net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
+    #    net = LazyNet(4, 0.001, architecture=[32*32*3,10,10,10])
+        net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
+        net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=3)
+        net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
+
+    if 0 :
+        net = LazyNet(4, 0.001, architecture=[32*32*3,300,300,10])
+    #    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
+        net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=64)

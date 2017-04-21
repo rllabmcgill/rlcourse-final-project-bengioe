@@ -12,8 +12,13 @@ def getTrainExps():
     for i in ls('results', endswith='.exp'):
         exp = pkl.load(open(i))
         if exp['mode'] == 'train':
-            print exp
             yield exp, i[:-4]
+def getTrainResults():
+    for i in ls('results', endswith='.exp'):
+        exp = pkl.load(open(i))
+        if exp['mode'] == 'train' and os.path.exists(i[:-4]+'.result'):
+            yield i[:-4], (exp, pkl.load(open(i[:-4]+'.result')))
+
 
 def getPhase2Exps(onlyWithResults=True):
     for i in ls('results', endswith='.exp'):
