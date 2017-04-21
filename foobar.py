@@ -631,6 +631,7 @@ if __name__ == '__main__':
         exps = []
         for nlayers in [2,3,4]:
             for nhid in [200,400,800]:
+
                 exps.append({'mode':'train', 'nlayers':nlayers, 'nhid':nhid,
                              'no_dropout':True,
                              'random_dropout':None})
