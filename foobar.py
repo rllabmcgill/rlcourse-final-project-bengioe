@@ -24,16 +24,16 @@ class TargetNet:
             if reloadFrom.endswith('.db'):
                 params = shelve.open(reloadFrom)
                 print params.keys()
-                print [params[i].shape for i in params]
 
                 self.params = map(theano.shared, [params[i] for i in
                                                   ['Wt0_0', 'bt0_1', 'Wt1_2', 'bt1_3', 'Woutput_4', 'boutput_5']])
             else:
                 self.params = map(theano.shared, pickle.load(open(reloadFrom)))
+            print [i.get_value().shape for i in self.params]
                 
             self.nhid = [self.params[i*2].get_value().shape[1] for i in range(len(self.params)/2-1)]
             self.nin = self.params[0].get_value().shape[0]
-            self.nout = self.params[-1].get_value().shape[1]
+            self.nout = self.params[-1].get_value().shape[0]
 
 
         elif architecture is not None:
@@ -297,12 +297,20 @@ class LazyNet:
         pickle.dump([i.get_value() for i in self.comppol.params], file(path,'w'),-1)
 
 
-    def trainTargetOnDataset(self, dataset, maxEpochs=50,mbsize=32,special_reg=False):
+    def trainTargetOnDataset(self, dataset, maxEpochs=50,mbsize=32,special_reg=False,randomDropout=False,
+                             doDropout=True):
         print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
         if not special_reg:
-            o = self.target.applyToX(x, dropout=0.5)
+            if doDropout: 
+                if randomDropout:
+                    drop = srng.uniform((1,),low=1e-2,high=1)
+                else:
+                    drop = 0.5
+            else:
+                drop = None
+            o = self.target.applyToX(x, dropout=drop)
             mbloss = T.nnet.categorical_crossentropy(o,y)
             #o = theano.printing.Print('o')(o)
             eq = T.eq(T.argmax(o,axis=1),y)
@@ -408,12 +416,13 @@ class LazyNet:
         learn = theano.function([x,y],[loss, acc],updates=updates)
         test = theano.function([x,y],[loss, acc, T.sum(probs, axis=0)])
         testMlp = theano.function([x,y],[T.sum(T.eq(T.argmax(self.target.applyToX(x),axis=1),y))])
-
-        print 'original model valid accuracy:',dataset.runEpoch(dataset.validMinibatches(), testMlp)
-        print 'start valid accuracy:'
-        valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
-        print valid_loss, valid_acc
-        print probs
+        
+        oacc = dataset.runEpoch(dataset.validMinibatches(), testMlp)
+        print 'original model valid accuracy:',oacc
+        #print 'start valid accuracy:'
+        #valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
+        #print valid_loss, valid_acc
+        #print probs
         print 'training computation policy'
         tolerance = 50
         last_validation_loss = 100
@@ -436,12 +445,13 @@ class LazyNet:
             if partition.ndim >= 2:
                 print partition.eval({}).argmax(axis=1)
             last_validation_loss = valid_loss
-            print self.partitionner.logits.get_value()
+            #print self.partitionner.logits.get_value()
         self.partitionner.partitionFeedback(partition, valid_acc)
         print list(probs), probs.mean()
         return {'train_acc':train_acc, 'valid_acc':valid_acc,
                 'train_loss':train_loss, 'valid_loss':valid_loss,
                 'vlosses':vlosses, 'vaccs':vaccs, 
+                'oacc': oacc,
                 'pmeans':pmeans,
                 'last_epoch':epoch}
     
@@ -456,31 +466,44 @@ def ls(c, endswith=''):
     return [os.path.join(c, i) for i in os.listdir(c) if i.endswith(endswith)]
 
 def run_exp(name):
+    exp_params = pkl.load(file(name+'.exp','r'))
+    #if exp_params['mode'] == 'phase2': return
     if os.path.exists(name+'.result'): print name,'has results'; return
-    if os.path.exists(name+'.lock'): print name,'is being run'; return
+    if os.path.exists(name+'.lock'): print name,'is being run'; print exp_params; return
     file(name+'.lock','w').write(str(os.getpid()))
     try:
-        exp_params = pkl.load(file(name+'.exp','r'))
         print 'running', name, exp_params
 
         if exp_params['mode'] == 'train':
             # train target network
             net = LazyNet(2, 0.001, 
                           architecture=[32*32*3]+[exp_params['nhid']]*exp_params['nlayers']+[10])
-            results = net.trainTargetOnDataset(svhn, randomDropout=exp_params['random_dropout'])
+            results = net.trainTargetOnDataset(svhn, randomDropout=exp_params['random_dropout'], 
+                                               doDropout=not exp_params.get('no_dropout',False))
             net.saveTargetWeights(name+'.weights')
             pkl.dump(results, file(name+'.result','w'),-1)
 
-        elif exp_params['mode'] == 'comppol':
-            net = LazyNet(exp_params['npart'], 
+        elif exp_params['mode'] == 'phase2':
+            if os.path.exists(exp_params['weights']):
+                net = LazyNet(exp_params['npart'], 
                           exp_params['lr'],
                           partitionner=eval(exp_params['partitionner']),
                           comppol=eval(exp_params['comppol']),
                           reloadFrom=exp_params['weights'])
-            results = net.performUpdate(svhn)
-            net.savePartitionnerWeights(name+'.pweights')
-            net.saveComppolWeights(name+'.cweights')
-            pkl.dump(results, file(name+'.results','w'),-1)
+                results = net.performUpdate(svhn)
+                pkl.dump(results, file(name+'.results','w'),-1)
+                net.savePartitionnerWeights(name+'.pweights')
+                net.saveComppolWeights(name+'.cweights')
+            else:
+                print 'net', exp_params['weights'], 'not trained yet'
+    except Exception,e:
+        import traceback
+        traceback.print_exc()
+        raise e
+    except KeyboardInterrupt,e:
+        import traceback
+        traceback.print_exc()
+        raise ValueError('keyboard interrupt')
     finally:
         os.remove(name+'.lock')
 
@@ -492,7 +515,7 @@ def generate_exps(exps):
         while os.path.exists(path):
             name = str(uuid.uuid4())[:8]
             path = 'results/'+name+'.exp'
-            
+        print name
         pkl.dump(i, file(path,'w'), -1)
     
         
@@ -511,6 +534,7 @@ if 0:
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,200,200,10])
     net.trainTargetOnDataset(svhn)
     net.saveTargetWeights('./svhn_mlp/retrained_params_4_200_rd_l1.pkl')
+    #net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
 
 import multiprocessing
 import os
@@ -524,8 +548,20 @@ def getTrainExps():
         if exp['mode'] == 'train':
             yield exp, i[:-4]
 
-if 1:
+def getPhase2Exps():
+    for i in ls('results', endswith='.exp'):
+        exp = pkl.load(open(i))
+        if exp['mode'] == 'phase2':
+            if 'Bandit' in exp['partitionner']:
+                print i
+if 0:
     exps = []
+    for nlayers in [2,3,4]:
+        for nhid in [200,400,800]:
+            exps.append({'mode':'train', 'nlayers':nlayers, 'nhid':nhid,
+                         'no_dropout':True,
+                         'random_dropout':None})
+    exps_ = []
     for nlayers in [2,3,4]:
         for nhid in [200,400,800]:
             for random_dropout in [True,False]:
@@ -534,7 +570,7 @@ if 1:
     
     if 0:
         generate_exps(exps)
-    else:
+    elif 0:
         phase2 = []
         for npart in [8,16]:
             for lr in [0.05,0.005,0.001]:
@@ -551,13 +587,32 @@ if 1:
                             #print path
         print len(phase2)
         generate_exps(phase2)
+    elif 0:
+        phase2 = []
+        for npart in [8,16]:
+            for lr in [0.05,0.005,0.001]:
+                for partitionner in ['GumbelSoftmaxPartitionner']:
+                    for comppol in ['ReinforceComputationPolicy', 'DPGComputationPolicy']:
+                        for exp, path in getTrainExps():
+                            if 'no_dropout' not in exp:
+                                continue
+                            print exp, path
+                            phase2.append({'mode':'phase2',
+                                           'npart':npart,
+                                           'lr':lr,
+                                           'partitionner':partitionner,
+                                           'comppol':comppol,
+                                           'targetnet':path,
+                                           'weights':path+'.weights'})
+                            #print path
+        print len(phase2)
+        generate_exps(phase2)
 
-if 0:
-    pool = multiprocessing.Pool(8)
+if 1:
+    pool = multiprocessing.Pool(4)
     exps = [i[:-4] for i in ls('results')
             if i.endswith('.exp')]
     pool.map(run_exp, exps)
-    net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
 
 if 0:
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])

@@ -56,20 +56,16 @@ def resident(since=0.0):
 class SVHN:
     def __init__(self, flat=True):
         path = svhn_path
-        print resident()
         if path.endswith('.pkl'):
             train,test = cPickle.load(open(svhn_path,'r'))
             train[1] = train[1].flatten() - 1
             test[1] = test[1].flatten() - 1
         elif path.endswith('.raw'):
             path = path[:-len('_trainX.raw')]
-            print 'raw',path
-            print 'resident:',resident()
             train = [np.memmap(path+'_trainX.raw',mode='r',shape=(604388, 32, 32, 3)),
                      np.memmap(path+'_trainY.raw',mode='r',shape=(604388,))]
             test = [np.memmap(path+'_testX.raw',mode='r',shape=(26032, 32, 32, 3)),
                     np.memmap(path+'_testY.raw',mode='r',shape=(26032,))]
-            print 'resident:',resident()
         n = 580000
         if flat:
             train[0] = train[0].reshape((train[0].shape[0],-1))
@@ -77,7 +73,6 @@ class SVHN:
         self.train = [train[0][:n], train[1][:n]]
         self.valid = [train[0][n:], train[1][n:]]
         self.test = test
-        print 'resident:',resident()
         
     def runEpoch(self, dataGenerator, func):
         n = dataGenerator.next()
