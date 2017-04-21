@@ -328,7 +328,7 @@ class LazyNet:
         print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
-        if not special_reg:
+        if not info_flow_reg:
             if doDropout: 
                 if randomDropout:
                     drop = srng.uniform((1,),low=1e-2,high=1)
@@ -577,15 +577,15 @@ if 0:
     #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
     net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)] + [0 for _ in range(80)])
     net.saveComppolWeights('7fb112a1_compol.weights')
-if 10 :
-    net = LazyNet(8, 0.001, architecture=[32*32*3,100,100,100,10]) 
-    net.trainTargetOnDataset(svhn)
-    net.saveTargetWeights('./small_mlp_3_100.pkl')
-    print 'weight saved.'
 if 0 :
-    net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
+    net = LazyNet(8, 0.001, architecture=[32*32*3,130,130,10]) 
+    net.trainTargetOnDataset(svhn)
+    net.saveTargetWeights('./small_mlp_2_130.pkl')
+    print 'weight saved.'
+#if 0 :
+  #  net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
     flow = net.getFLowOnDataset(svhn,mbsize=20)
-    f = open('results_flow3.pkl', 'wb')
+    f = open('results_flow_2_130.pkl', 'wb')
     pickle.dump(flow, f)
     f.close()
 
