@@ -4,6 +4,7 @@ import numpy as np
 import theano
 import theano.tensor as T
 from theano.tests.breakpoint import PdbBreakpoint
+from theano.compile.nanguardmode import NanGuardMode
 
 from util import make_param, srng, sgd, SVHN
 
@@ -85,15 +86,23 @@ class TargetNet:
 class BanditPartitionner:
     def __init__(self, npart, nhid):
         self.n = sum(nhid)
+        self.npart = npart
         self.total_rewards = np.zeros((sum(nhid), npart)) + 1e-3
         self.visits = np.zeros((sum(nhid), npart)) + 1e-5
-        
+
     def makePartition(self):
         # greedy partition
         return randargmax(self.total_rewards / self.visits, axis=1), lambda *x: []
 
-    def partitionFeedback(self, partition, reward):
+    def partitionFeedback(self, partition, reward,probs):
+        hist = np.histogram(partition,bins=self.npart)[0]
+#        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
+#        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist/self.n -0.25)**2) + reward
+       # self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
         self.total_rewards[np.ogrid[:self.n], partition] += reward
+
+
+
         self.visits[np.ogrid[:self.n], partition] += 1
         
 class UCBBanditPartitionner:
@@ -109,7 +118,7 @@ class UCBBanditPartitionner:
         # greedy partition
         return randargmax(self.Q + self.c*np.sqrt(np.log(self.t) / self.visits), axis=1), lambda *x: []
 
-    def partitionFeedback(self, partition, reward):
+    def partitionFeedback(self, partition, reward, probs):
         self.Q[np.ogrid[:self.n], partition] = self.Q[np.ogrid[:self.n], partition] + self.lr * (reward - self.Q[np.ogrid[:self.n], partition])
         self.visits[np.ogrid[:self.n], partition] += 1
         self.t += 1
@@ -175,44 +184,43 @@ class ContextualBanditPartitionner:
         self.total_rewards = np.zeros((sum(nhid), npart))
         self.visits = np.zeros((sum(nhid), npart)) + 1e-3
 
-#        self.exploit_total_rewards = np.zeros((sum(nhid), npart))
-#        self.exploit_visits = np.zeros((sum(nhid), npart)) + 1e-3
-#        self.explore_total_rewards = np.zeros((sum(nhid), npart))
-#        self.explore_visits = np.zeros((sum(nhid), npart)) + 1e-3
+        self.beta_h = [np.zeros((npart, nh)) for nh in [net.nin]+nhid]
 
-        self.beta_h = [np.zeros((npart, nh)) for nh in nhid]
-#        self.beta_t = [np.zeros((npart, nh)) for nh in nhid]
-
-    def makePartition(self):
+    def makePartition(self, epsilon=0.0):
 
         X = self.weights
-        part = np.zeros((self.n,))
+        part = np.zeros((self.n,),dtype=np.int)
         i = 0
         for l in range(self.nlayers):
             for n in range(self.nhid[l]):
-                if False :
-                # if gap between action is big enough use beta tilde instead of beta hat (whatever that means)
-#                if np.min([np.abs((beta_t[l][a1] - beta_t[l][a2]).T *X[l][n]) for a1,a2 in .....]) < h / 2.0:
-                    part[i] = randargmax(np.array([(self.beta_t[l][a]).T * X[l][n] for a in range(self.npart)]))
-                else:
-                    part[i] = randargmax(np.array([(self.beta_h[l][a]).T * X[l][n] for a in range(self.npart)]))
-            i += 1
-        return part
+                #print(self.beta_h[l][0].shape, X[l][n].shape)
+                part[i] = randargmax(np.array([np.dot((self.beta_h[l][a]).T, X[l].T[n]) for a in range(self.npart)]))
+                i += 1
+        if epsilon > 0.0 :
+            rand_mask = np.random.binomial(1,epsilon,self.n)
+            rand_values = np.random.choice(range(self.npart),size=sum(rand_mask),replace=True)
+            for j,k in enumerate(rand_mask.nonzero()[0]):
+                part[k] = rand_values[j]
+
+        return part, lambda *x:[]
 
     def betaUpdate(self):
         X = self.weights
         y = 0
-        for l, a in product(range(self.nlayers), range(self.npart)):
+        for l in range(self.nlayers):
             yy = y + self.nhid[l]
             coeff, R = X[l], self.total_rewards[y:yy] / self.visits[y:yy]
-            self.beta_h[l][a] = np.linalg.ltsqr(coeff, R)
-
-            # only on exploration round
-#            self.beta_h[l][a] = least_sqr(np.hstack([explore_coeff, exploit_coeff]), np.vstack([explore_R, exploit_R]))
-#            self.beta_h[l][a] = least_sqr(explore_coeff, explore_R)
+            for a in range(self.npart):
+                self.beta_h[l][a] = np.linalg.lstsq(coeff.T, R.T[a])[0]
             y = yy
 
-    def partitionFeedback(self, partition, reward):
+    def partitionFeedback(self, partition, reward, probs):
+        hist = np.histogram(partition,bins=self.npart)[0]
+#        self.total_rewards[np.ogrid[:self.n], partition] += np.sum((hist[partition[np.ogrid[:self.n]]]/self.n -0.25)**2) + reward
+#        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum((hist/self.n - 1.0/self.npart)**2) + reward
+#        self.total_rewards[np.ogrid[:self.n], partition] +=  np.sum(np.dot(probs,hist)) + reward
+	#print(np.ogrid[:self.n].dtype)
+        #print(partition.dtype)
         self.total_rewards[np.ogrid[:self.n], partition] += reward
         self.visits[np.ogrid[:self.n], partition] += 1
         self.betaUpdate()
@@ -280,13 +288,12 @@ class LazyNet:
         #self.partitionner = BanditPartitionner(npart, self.target.nhid)
         #self.partitionner = UCBBanditPartitionner(npart, self.target.nhid)
         #self.partitionner = GumbelSoftmaxPartitionner(npart, self.target.nhid)
+        #self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target) 
         self.partitionner = partitionner(npart, self.target.nhid)
         #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         #self.comppol = DPGComputationPolicy(npart, self.target.nin)
         self.comppol = comppol(npart, self.target.nin)
         self.lr = theano.shared(numpy.float32(lr))
-        #self.partitionner = ContextualBanditPartitionner(npart, self.target.nhid, self.target)
-        #self.comppol = ReinforceComputationPolicy(npart, self.target.nin)
         self.npart = npart
         
     def saveTargetWeights(self, path):
@@ -296,8 +303,27 @@ class LazyNet:
     def saveComppolWeights(self, path):
         pickle.dump([i.get_value() for i in self.comppol.params], file(path,'w'),-1)
 
+    def getFLowOnDataset(self, dataset,mbsize=20):
+        print 'creating theano graph...'
+        x = T.matrix()
+        y = T.ivector()
+        o, hs = self.target.applyToX(x, dropout=None, return_activation=True)
+        Ws = self.target.get_weights()
+        onehot_y = T.extra_ops.to_one_hot(y, 10)
+        f_ij_c = [1.0 / T.sum(onehot_y, axis=0).dimshuffle(0, 'x', 'x') * T.sum(
+            onehot_y.dimshuffle(1, 0, 'x', 'x') * abs(h.dimshuffle('x', 0, 1, 'x') * W.dimshuffle('x', 'x', 0, 1)), axis=1)
+                  for h, W in zip(hs, Ws)]
+        print("compiling...")
+        eval_flow = theano.function([x,y], f_ij_c,
+                               mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=False))
+        print("calculating...")
 
-    def trainTargetOnDataset(self, dataset, maxEpochs=50,mbsize=32,special_reg=False,randomDropout=False,
+        flows = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=True), eval_flow)
+        print("done.")
+        return flows
+
+
+    def trainTargetOnDataset(self, dataset, maxEpochs=50,mbsize=32,info_flow_reg=False,randomDropout=False,
                              doDropout=True):
         print 'creating theano graph...'
         x = T.matrix()
@@ -318,7 +344,7 @@ class LazyNet:
             acc = T.sum(eq)
             loss = T.sum(mbloss)
         else :
-            o,hs = self.target.applyToX(x, dropout=0.5, return_activation=True)
+            o,hs = self.target.applyToX(x, dropout=None, return_activation=True)
             mbloss = T.nnet.categorical_crossentropy(o,y)
             #o = theano.printing.Print('o')(o)
             eq = T.eq(T.argmax(o,axis=1),y)
@@ -328,41 +354,42 @@ class LazyNet:
 
 
             Ws = self.target.get_weights()
-            c,i,j = T.scalar(), T.scalar(dtype='int32'), T.scalar(dtype='int32')
-            #h, W = T.matrix(), T.matrix()
-            count_c = T.sum([T.eq(y[m],c) for m in range(mbsize)])
+            onehot_y = T.extra_ops.to_one_hot(y,10)
+           # f_ij_c = [T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
+            f_ij_c = [1.0/T.sum(onehot_y,axis=0).dimshuffle(0,'x','x') * T.sum(onehot_y.dimshuffle(1,0,'x','x') * abs( h.dimshuffle('x',0,1,'x') * W.dimshuffle('x','x',0,1)),axis=1) for h,W in zip(hs,Ws)]
 
-            #flow_ij_c = 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
+            reg_loss = T.sum([T.sum(T.prod(f, axis=0)) for f in f_ij_c])
+#            reg_loss = theano.printing.Print('reg_loss')(reg_loss)
+#            loss = theano.printing.Print('loss')(loss)
 
-            def f_ij_c(h,W,c,i,j):
-                return 1.0/count_c * T.sum([T.eq(y[m],c)*abs(h[m,i]*W[i,j]) for m in range(mbsize)])
-
-
- #           f_ij_c = theano.function([h,W,c,i,j,y],flow_ij_c)
-
-            nhid, nout = self.target.nhid, self.target.nout
-#            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,ws,cls,i,j,y) for cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
-
-            fancy_reg = T.sum([T.sum([T.prod([f_ij_c(h,w,cls,i,j) for cls in range(nout)]) for i,j in product(range(nhid[l]),range(nhid[l+1]))]) for l,(h,w) in enumerate(zip(hs,Ws))])
-
-
-#            fancy_reg = T.sum([T.prod([f_ij_c(i,j,cls) for cls in range(self.nclass)]) for i,j in all_valid_pairs_of_nodes])
-            loss = loss + 0.001 * fancy_reg
+            loss = loss + 10*reg_loss
 
         updates = sgd(self.target.params, T.grad(loss, self.target.params), self.lr)
         print 'compiling'
-        learn = theano.function([x,y],[loss, acc],updates=updates)
-        test = theano.function([x,y],[loss, acc])
+        if info_flow_reg:
+            learn = theano.function([x,y],[loss, acc,reg_loss],updates=updates, mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
+            test = theano.function([x,y],[loss, acc,reg_loss],mode=NanGuardMode(nan_is_error=True, inf_is_error=True, big_is_error=True))
+        else :
+            learn = theano.function([x,y],[loss, acc],updates=updates)
+            test = theano.function([x,y],[loss, acc])
         tolerance = 10
         last_validation_loss = 1
         vlosses = []
         vaccs = []
+        print('starting training')
         for epoch in range(maxEpochs):
-            train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(mbsize), learn)
-            valid_loss, valid_acc = dataset.runEpoch(dataset.validMinibatches(mbsize), test)
+            if info_flow_reg:
+                train_loss, train_acc, train_reg = dataset.runEpoch(dataset.trainMinibatches(mbsize,balanced=True), learn)
+                valid_loss, valid_acc, valid_reg, = dataset.runEpoch(dataset.validMinibatches(mbsize,balanced=True), test)
+                print epoch, train_loss, train_acc, train_reg, valid_loss, valid_acc, valid_reg
+            else:
+                train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(mbsize), learn)
+                valid_loss, valid_acc = dataset.runEpoch(dataset.validMinibatches(mbsize), test)
+                print epoch, train_loss, train_acc, valid_loss, valid_acc
+
             vlosses.append(valid_loss); vaccs.append(valid_acc)
-            print epoch, train_loss, train_acc, valid_loss, valid_acc
             if valid_loss > last_validation_loss:
+                self.saveTargetWeights('temp.pkl')
                 tolerance -= 1
                 if tolerance <= 0:
                     break
@@ -372,15 +399,19 @@ class LazyNet:
                 'vlosses':vlosses, 'vaccs':vaccs,
                 'last_epoch':epoch}
 
-    def performUpdate(self, dataset, maxEpochs=100):
+    def performUpdate(self, dataset, maxEpochs=100,epsilon=0.0):
         #print 'creating theano graph...'
         x = T.matrix()
         y = T.ivector()
         # reset policy
         self.comppol = ReinforceComputationPolicy(self.npart, self.target.nin)
-        partition, partitionFeedbackMethod = self.partitionner.makePartition()
-        partitionMask, probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
+        if epsilon > 0.0 :
+            partition, partitionFeedbackMethod = self.partitionner.makePartition(epsilon)
+        else :
+            partition, partitionFeedbackMethod = self.partitionner.makePartition()
+        partitionMask, valid_probs, policyFeedbackMethod = self.comppol.applyAndGetFeedbackMethod(x)
         if partition.ndim == 1:
+#            print('partition',partition)
             idxes = [partition[start:end]
                      for start,end in zip(np.cumsum(self.target.nhid) - self.target.nhid[0],
                                           np.cumsum(self.target.nhid))]
@@ -414,28 +445,28 @@ class LazyNet:
         loss = T.sum(mbloss)
         print 'compiling'
         learn = theano.function([x,y],[loss, acc],updates=updates)
-        test = theano.function([x,y],[loss, acc, T.sum(probs, axis=0)])
+        test = theano.function([x,y],[loss, acc, T.sum(valid_probs, axis=0)])
         testMlp = theano.function([x,y],[T.sum(T.eq(T.argmax(self.target.applyToX(x),axis=1),y))])
         
         oacc = dataset.runEpoch(dataset.validMinibatches(), testMlp)
         print 'original model valid accuracy:',oacc
-        #print 'start valid accuracy:'
-        #valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
-        #print valid_loss, valid_acc
-        #print probs
+        print 'start valid accuracy:'
+        valid_loss, valid_acc, valid_probs = dataset.runEpoch(dataset.validMinibatches(), test)
+        print valid_loss, valid_acc
+        print valid_probs
         print 'training computation policy'
-        tolerance = 50
+        tolerance = 10
         last_validation_loss = 100
         vlosses = []
         vaccs = []
         pmeans = []
         for epoch in range(maxEpochs):
             train_loss, train_acc = dataset.runEpoch(dataset.trainMinibatches(), learn)
-            valid_loss, valid_acc, probs = dataset.runEpoch(dataset.validMinibatches(), test)
-            vlosses.append(valid_loss); vaccs.append(valid_acc); pmeans.append(probs.mean())
+            valid_loss, valid_acc, valid_probs = dataset.runEpoch(dataset.validMinibatches(), test)
+            vlosses.append(valid_loss); vaccs.append(valid_acc); pmeans.append(valid_probs.mean())
             print epoch, train_loss, train_acc, valid_loss, valid_acc
-            print probs
-            print test(numpy.float32(dataset.train[0][0:1]/255.), dataset.train[1][0:1])[2]
+            print valid_probs
+#            print test(numpy.float32(dataset.train[0][0:1]/255.), dataset.train[1][0:1])[2]
             if valid_loss > last_validation_loss:
                 tolerance -= 1
                 self.lr.set_value(self.lr.get_value() * numpy.float32(0.75))
@@ -443,11 +474,16 @@ class LazyNet:
                 if tolerance <= 0:
                     break
             if partition.ndim >= 2:
-                print partition.eval({}).argmax(axis=1)
+                pt = partition.eval({}).argmax(axis=1)
+                print pt
+                print np.histogram(pt, bins=self.npart)
+            else :
+                print np.histogram(partition, bins=self.npart)
+
             last_validation_loss = valid_loss
             #print self.partitionner.logits.get_value()
-        self.partitionner.partitionFeedback(partition, valid_acc)
-        print list(probs), probs.mean()
+        self.partitionner.partitionFeedback(partition, valid_acc, valid_probs)
+        print list(valid_probs), valid_probs.mean()
         return {'train_acc':train_acc, 'valid_acc':valid_acc,
                 'train_loss':train_loss, 'valid_loss':valid_loss,
                 'vlosses':vlosses, 'vaccs':vaccs, 
@@ -455,12 +491,20 @@ class LazyNet:
                 'pmeans':pmeans,
                 'last_epoch':epoch}
     
-    def updateLoop(self, dataset):
+    def updateLoop(self, dataset, epsilon_schedule=None):
         accs = []
         for i in range(100):
-            accs.append(self.performUpdate(dataset))
+            if epsilon_schedule is None :
+                accs.append(self.performUpdate(dataset))
+            else:
+                print 'eps %f' % epsilon_schedule[i]
+                accs.append(self.performUpdate(dataset,epsilon=epsilon_schedule[i]))
             print '    ', i, max(accs)
             print accs
+    #    f = open('results_updateloop.txt','w')
+    #    pickle.dump(accs,f)
+    #    f.close()
+
 
 def ls(c, endswith=''):
     return [os.path.join(c, i) for i in os.listdir(c) if i.endswith(endswith)]
@@ -521,9 +565,25 @@ def generate_exps(exps):
         
 svhn = SVHN()
 if 0:
-    #net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
-    net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
-    net.updateLoop(svhn)
+    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+    #net = LazyNet(8, 0.00001,reloadFrom='./svhn_mlp/retrained_params.pkl')
+if 0 :
+    net = LazyNet(16, 0.001, architecture=[32*32*3,250,250,10])
+    net.trainTargetOnDataset(svhn, info_flow_reg=True)
+    net.saveTargetWeights('./svhn_mlp/retrained_params_16_250_2.pkl')
+if 0:
+#    net = LazyNet(16, 0.00001,reloadFrom='./svhn_mlp/params.db')
+    net = LazyNet(16, 0.00001,reloadFrom='./chosebine/7fb112a1.weights')
+    #net = LazyNet(8, 0.0001,reloadFrom='./svhn_mlp/retrained_params.pkl')
+    net.updateLoop(svhn,epsilon_schedule=[0,0.8,0.8,0.75,0.7,0.7,0.5,0.5,0.3,0.2]+[0.1 for _ in range(10)] + [0 for _ in range(80)])
+    net.saveComppolWeights('7fb112a1_compol.weights')
+if 1 :
+    net = LazyNet(16, 0.00001, reloadFrom='./chosebine/7fb112a1.weights')
+    flow = net.getFLowOnDataset(svhn,mbsize=20)
+    f = open('results_flow.pkl', 'wb')
+    pickle.dump(flow, f)
+    f.close()
+
 if 0:
     net = LazyNet(16, 0.05,reloadFrom='./svhn_mlp/retrained_params_4_200_rd_nodiv.pkl')
     #net = LazyNet(16, 0.005,reloadFrom='./svhn_mlp/retrained_params_4_200.pkl')
@@ -615,6 +675,13 @@ if 1:
     pool.map(run_exp, exps)
 
 if 0:
+    net.saveTargetWeights('./svhn_mlp/retrained_params.pkl')
+#    net = LazyNet(4, 0.001, architecture=[32*32*3,10,10,10])
     net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
-    net.trainTargetOnDataset(svhn,special_reg=True)
+    net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=3)
     net.saveTargetWeights('./svhn_mlp/trained_params2.pkl')
+
+if 0 :
+    net = LazyNet(4, 0.001, architecture=[32*32*3,300,300,10])
+#    net = LazyNet(4, 0.001, architecture=[32*32*3,200,200,10])
+    net.trainTargetOnDataset(svhn, info_flow_reg=True, mbsize=64)

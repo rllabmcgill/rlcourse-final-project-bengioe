@@ -1,8 +1,14 @@
+#from __future__ import print_function
+from sklearn.model_selection import StratifiedKFold as SKF #for balanced minibatch option
 import cPickle
 import numpy
 import numpy as np
 import gzip
+from time import gmtime, strftime
+import pickle
+import sys
 import os
+from operator import itemgetter
 
 svhn_path = None
 for path in ['/home/2014/ebengi/a10/data/svhn_crop/svhn_shuffled_trainX.raw',
@@ -13,7 +19,7 @@ for path in ['/home/2014/ebengi/a10/data/svhn_crop/svhn_shuffled_trainX.raw',
         svhn_path = path
         break
 if svhn_path is None:
-    print '>>> Warning <<< couldnt find SVHN'
+    print('>>> Warning <<< couldnt find SVHN')
 
 import os
 _proc_status = '/proc/%d/status' % os.getpid()
@@ -56,16 +62,29 @@ def resident(since=0.0):
 class SVHN:
     def __init__(self, flat=True):
         path = svhn_path
+<<<<<<< HEAD
+=======
+        print(resident())
+>>>>>>> 883ea55eaa222ea897b8a3f6e072acd83843196f
         if path.endswith('.pkl'):
             train,test = cPickle.load(open(svhn_path,'r'))
             train[1] = train[1].flatten() - 1
             test[1] = test[1].flatten() - 1
         elif path.endswith('.raw'):
             path = path[:-len('_trainX.raw')]
+<<<<<<< HEAD
+=======
+            print('raw',path)
+            print('resident:',resident())
+>>>>>>> 883ea55eaa222ea897b8a3f6e072acd83843196f
             train = [np.memmap(path+'_trainX.raw',mode='r',shape=(604388, 32, 32, 3)),
                      np.memmap(path+'_trainY.raw',mode='r',shape=(604388,))]
             test = [np.memmap(path+'_testX.raw',mode='r',shape=(26032, 32, 32, 3)),
                     np.memmap(path+'_testY.raw',mode='r',shape=(26032,))]
+<<<<<<< HEAD
+=======
+            print('resident:',resident())
+>>>>>>> 883ea55eaa222ea897b8a3f6e072acd83843196f
         n = 580000
         if flat:
             train[0] = train[0].reshape((train[0].shape[0],-1))
@@ -73,12 +92,24 @@ class SVHN:
         self.train = [train[0][:n], train[1][:n]]
         self.valid = [train[0][n:], train[1][n:]]
         self.test = test
+<<<<<<< HEAD
         
+=======
+        print('resident:',resident())
+
+>>>>>>> 883ea55eaa222ea897b8a3f6e072acd83843196f
     def runEpoch(self, dataGenerator, func):
         n = dataGenerator.next()
         #print n
         stats = None
+        e=-1
+        print('\n')
+        print "minibatch",
         for a in dataGenerator:
+            e += 1
+            if e %100 == 0 :
+                print '%i,'%e,
+#                sys.stdout.flush()
             s = func(*a)
             if stats is None:
                 stats = map(np.float32,s)
@@ -88,11 +119,43 @@ class SVHN:
         #print stats, [i/n for i in stats]
         return [i / n for i in stats]
 
-    def validMinibatches(self, mbsize=32):
-        return self.minibatches(self.valid, mbsize, True)
-    
-    def trainMinibatches(self, mbsize=32):
-        return self.minibatches(self.train, mbsize, True)
+    def validMinibatches(self, mbsize=32,balanced=False):
+        if balanced:
+            return self.balancedMinibatches(self.valid, mbsize, True)
+        else:
+            return self.minibatches(self.valid, mbsize, True)
+
+    def trainMinibatches(self, mbsize=32,balanced=False):
+        if balanced :
+            return self.balancedMinibatches(self.train, mbsize, True)
+        else :
+            return self.minibatches(self.train, mbsize, True)
+
+    def balancedMinibatches(self, dset, mbsize=32, yieldN=False,load=False):
+        n = dset[0].shape[0]
+        if yieldN:
+            yield n
+        if not load :
+            nb_minibatch = n / mbsize + bool(n % mbsize)
+            skf = SKF(n_splits=nb_minibatch,shuffle=True)
+            print('starting split %s'%strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+            split = map(itemgetter(1),skf.split(dset[0],dset[1]))
+            print('split done%s'%strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+            f = open('./split_valid_%i.pkl'%mbsize,'wb')
+            split = list(split)
+            print('saving')
+            pickle.dump(split,f)
+            print('finished')
+            f.close()
+        else :
+            f = open('./split_valid_%i.pkl'%mbsize, 'rb')
+            split = pickle.load(f)
+            f.close()
+            print('split loaded')
+
+        for idx in split:
+            idx = idx
+            yield numpy.float32(dset[0][idx] / 255.), dset[1][idx]
 
     def minibatches(self, dset, mbsize=32, yieldN=False):
         n = dset[0].shape[0]
