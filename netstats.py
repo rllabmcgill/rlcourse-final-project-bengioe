@@ -30,7 +30,7 @@ if False :
     nnet = NNet(reloadFrom=argmax[0]['weights'])
 
 
-if True :
+if 0 :
     nnet = NNet(reloadFrom="small_mlp_3_100.pkl")
 
     # coactivation probabilities
@@ -119,7 +119,7 @@ def get_coact(extract):
     coact_full = coact_full[:, sorted(range(N),key=lambda x:means[x])]
     return coact_full
 
-if 1:
+if 0:
     label = 'random_drop'
     #coact_rd = get_coact(extract)
     if 1:
@@ -164,7 +164,8 @@ if 1:
 
 if 0:
 #    f = open("results_flow3.pkl","rb")
-    f = open("results_flow_2_130.pkl","rb")
+    #f = open("results_flow_2_130.pkl","rb")
+    f = open("results_flow_2.pkl","rb")
     loaded_flow = pickle.load(f)
     print map(lambda x:x.shape, loaded_flow)
 #    assert False
@@ -173,13 +174,9 @@ if 0:
     for c in range(10):
         print('c',c)
 
-        H = np.concatenate([lf[c].flatten() for lf in loaded_flow])
-#        H = np.concatenate([np.sum(lf[c],axis=0) for lf in loaded_flow])
+        #H = np.concatenate([lf[c].flatten() for lf in loaded_flow])
+        H = np.concatenate([np.sum(lf[c],axis=0) for lf in loaded_flow])
         hs.append(H)
-
-    for f in loaded_flow:
-        f = f.prod(axis=0)
-        pp.matshow(f)
 
     #    if _ > 2000: break
     #coact_full[range(N), range(N)] = 0
@@ -190,14 +187,13 @@ if 0:
         means = coact_full.mean(axis=1)
 #        coact_full = coact_full[sorted(range(coact_full.shape[0]),key=lambda x:means[x])]
         pp.matshow(coact_full)
-        pp.savefig('coprod_full_%i.png'%c)
+        pp.savefig('flow_full_%i.png'%c)
         pp.matshow(np.log(coact_full+1))
-        pp.savefig('coprod_full_log_%i.png'%c)
-    print time.time()-t0
+        pp.savefig('flow_full_log_%i.png'%c)
 
-if 0 :
+if 1 :
 #    f = open("results_flow_2_130.pkl","rb")
-    f = open("results_flow3.pkl","rb")
+    f = open("results_flow_2.pkl","rb")
     loaded_flow = pickle.load(f)
 
 
@@ -205,5 +201,5 @@ if 0 :
         f = np.sum(np.log(f+f[f>0].min()),axis=0)
         f = f[sorted(range(f.shape[0]),key=lambda x : f[x].mean())]
         pp.matshow(f)
-        pp.savefig('coprod_full_%i.png'%i)
+        pp.savefig('flow_full_chose_%i.png'%i)
 
